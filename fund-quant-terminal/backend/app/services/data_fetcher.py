@@ -38,6 +38,86 @@ class DataFetcherService:
         """运行时更新 Tushare Token 并重新初始化"""
         self._init_tushare(token or "")
 
+    async def get_fund_name(self, fund_code: str) -> Optional[str]:
+        """
+        根据基金代码获取真实基金名称
+        优先 fund_individual_basic_info_xq，失败时从 fund_list 查找
+        """
+        def _fetch() -> Optional[str]:
+            try:
+                import akshare as ak
+                df = ak.fund_individual_basic_info_xq(symbol=fund_code.strip())
+                if df is not None and not df.empty:
+                    # 可能是 key-value 格式（item/value）或 基金名称 列
+                    cols = list(df.columns)
+                    if len(cols) >= 2:
+                        # key-value 形式：找 基金名称/基金简称 对应的值
+                        key_col = cols[0] if "item" in str(cols[0]).lower() or "名称" in str(cols[0]) else cols[0]
+                        val_col = cols[1]
+                        for _, r in df.iterrows():
+                            k = str(r.get(key_col, "")).strip()
+                            if k in ("基金名称", "基金简称", "name"):
+                                v = r.get(val_col)
+                                if v and str(v).strip():
+                                    return str(v).strip()
+                    for col in ["基金名称", "name", "基金简称"]:
+                        if col in df.columns:
+                            val = df[col].iloc[0]
+                            if val and str(val).strip():
+                                return str(val).strip()
+                return None
+            except Exception as e:
+                logger.debug("get_fund_name fund_individual_basic_info_xq 失败 %s: %s", fund_code, e)
+                return None
+
+        try:
+            name = await asyncio.to_thread(_fetch)
+            if name:
+                return name
+        except Exception as e:
+            logger.debug("get_fund_name 异常 fund_code=%s: %s", fund_code, e)
+
+        # 降级：从 fund_list 查找
+        try:
+            fund_list = await self.get_fund_list(limit=20000)
+            code_clean = fund_code.strip().replace(".OF", "")
+            for f in fund_list:
+                c = str(f.get("code") or f.get("基金代码") or "")
+                if c.replace(".OF", "").strip() == code_clean:
+                    return str(f.get("name") or f.get("基金简称") or "").strip() or None
+        except Exception as e:
+            logger.debug("get_fund_name fund_list fallback 失败: %s", e)
+        return None
+
+    async def get_stock_name(self, symbol: str) -> Optional[str]:
+        """
+        根据股票代码获取真实股票名称
+        使用 akshare stock_info_a_code_name
+        """
+        def _fetch() -> Optional[str]:
+            try:
+                import akshare as ak
+                df = ak.stock_info_a_code_name()
+                if df is None or df.empty:
+                    return None
+                code_col = "code" if "code" in df.columns else "代码"
+                name_col = "name" if "name" in df.columns else "名称"
+                sym = symbol.strip().split(".")[0].zfill(6)
+                for _, r in df.iterrows():
+                    c = str(r.get(code_col, "")).zfill(6)
+                    if c == sym:
+                        return str(r.get(name_col, "")).strip() or None
+                return None
+            except Exception as e:
+                logger.debug("get_stock_name 失败 symbol=%s: %s", symbol, e)
+                return None
+
+        try:
+            return await asyncio.to_thread(_fetch)
+        except Exception as e:
+            logger.debug("get_stock_name 异常: %s", e)
+            return None
+
     async def get_fund_nav(self, fund_code: str) -> List[Dict[str, Any]]:
         """
         获取基金净值走势

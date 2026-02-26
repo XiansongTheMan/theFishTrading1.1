@@ -55,3 +55,16 @@ async def ensure_indexes():
         logger.info("assets 索引创建完成")
     except Exception as e:
         logger.warning("assets 索引创建: %s", e)
+
+    try:
+        await db.holding_histories.create_index([("symbol", 1), ("asset_type", 1)], unique=True, name="ix_symbol_type")
+        logger.info("holding_histories 索引创建完成")
+    except Exception as e:
+        logger.warning("holding_histories 索引: %s", e)
+
+    try:
+        await db.holding_transactions.create_index([("symbol", 1), ("asset_type", 1)], name="ix_symbol_type")
+        await db.holding_transactions.create_index("date", name="ix_date")
+        logger.info("holding_transactions 索引创建完成")
+    except Exception as e:
+        logger.warning("holding_transactions 索引: %s", e)

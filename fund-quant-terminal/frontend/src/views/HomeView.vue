@@ -21,10 +21,13 @@ import {
   ElOption,
   ElMessage,
 } from "element-plus";
+import { useRouter } from "vue-router";
 import { useAppStore } from "../stores/app";
 import { getAssets, getAssetsSummary, createAsset } from "../api/assets";
+import { getFundInfo, getStockInfo } from "../api/data";
 
 const appStore = useAppStore();
+const router = useRouter();
 const dialogVisible = ref(false);
 const form = ref({
   symbol: "",
@@ -56,14 +59,33 @@ onMounted(async () => {
 });
 
 async function submitAsset() {
-  if (!form.value.symbol || !form.value.name) {
-    ElMessage.warning("请填写代码和名称");
+  if (!form.value.symbol?.trim()) {
+    ElMessage.warning("请填写代码");
     return;
   }
+  const sym = form.value.symbol.trim();
+  let name = form.value.name?.trim();
   try {
+    // 获取真实名称
+    if (form.value.asset_type === "fund") {
+      const res = (await getFundInfo(sym)) as { data?: { name?: string; nav?: number } };
+      const apiName = res?.data?.name?.trim();
+      if (apiName && !apiName.startsWith("基金" + sym)) name = apiName;
+      if (res?.data?.nav != null && form.value.current_price == null) {
+        form.value.current_price = res.data.nav;
+      }
+    } else {
+      const res = (await getStockInfo(sym)) as { data?: { name?: string; latest_price?: number } };
+      const apiName = res?.data?.name?.trim();
+      if (apiName && !apiName.startsWith("股票" + sym)) name = apiName;
+      if (res?.data?.latest_price != null && form.value.current_price == null) {
+        form.value.current_price = res.data.latest_price;
+      }
+    }
+    if (!name) name = form.value.name?.trim() || sym;
     await createAsset({
-      symbol: form.value.symbol,
-      name: form.value.name,
+      symbol: sym,
+      name,
       quantity: form.value.quantity,
       cost_price: form.value.cost_price,
       current_price: form.value.current_price,
@@ -86,6 +108,12 @@ async function submitAsset() {
 function openAddAsset() {
   form.value = { symbol: "", name: "", quantity: 0, cost_price: undefined, current_price: undefined, asset_type: "fund" };
   dialogVisible.value = true;
+}
+
+function goToDetail(row: { symbol?: string; assetType?: string }) {
+  const sym = row.symbol?.trim().split(".")[0];
+  const type = (row.assetType ?? "fund") === "stock" ? "stock" : "fund";
+  if (sym) router.push(`/holding/${type}/${encodeURIComponent(sym)}`);
 }
 
 const totalAssets = computed(() => appStore.totalAssets);
@@ -124,11 +152,25 @@ const cash = computed(() => appStore.capital);
       <div v-if="appStore.holdings.length === 0" class="empty-hint">
         暂无持仓，初始资金 {{ appStore.initialCapital }} 元
       </div>
-      <el-table v-else :data="appStore.holdings" stripe>
+      <el-table
+        v-else
+        :data="appStore.holdings"
+        stripe
+        style="cursor: pointer"
+        @row-click="goToDetail"
+      >
         <el-table-column prop="symbol" label="代码" width="100" />
         <el-table-column prop="name" label="名称" />
-        <el-table-column prop="quantity" label="数量/份额" width="120" />
-        <el-table-column prop="currentPrice" label="现价" width="100" />
+        <el-table-column prop="quantity" label="数量/份额" width="120">
+          <template #default="{ row }">
+            {{ row.quantity != null ? Math.round(row.quantity) : "-" }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="currentPrice" label="现价" width="100">
+          <template #default="{ row }">
+            {{ row.currentPrice != null ? Number(row.currentPrice).toFixed(4) : "-" }}
+          </template>
+        </el-table-column>
         <el-table-column label="市值" width="120">
           <template #default="{ row }">
             {{ ((row.currentPrice ?? row.costPrice ?? 0) * row.quantity).toFixed(2) }} 元

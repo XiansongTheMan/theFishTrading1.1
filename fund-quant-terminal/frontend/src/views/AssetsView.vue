@@ -21,19 +21,22 @@ import {
   ElMessageBox,
   ElAlert,
 } from "element-plus";
+import { useRouter } from "vue-router";
 import {
   getAssetsSummary,
   updateAssets,
   createAsset,
   updateAsset,
   deleteAsset,
+  syncAssets,
   type Asset,
   type AssetsSummary,
 } from "../api/assets";
-import { getFundInfo } from "../api/data";
+import { getFundInfo, getStockInfo } from "../api/data";
 import { useAppStore } from "../stores/app";
 
 const appStore = useAppStore();
+const router = useRouter();
 const loading = ref(false);
 const summary = ref<AssetsSummary | null>(null);
 
@@ -179,9 +182,21 @@ async function submitAdd() {
         asset_type: "fund",
       });
     } else {
+      // 获取股票真实名称，若无则使用用户输入
+      let stockName = addForm.value.name?.trim();
+      try {
+        const stockRes = (await getStockInfo(symbol)) as { data?: { name?: string; latest_price?: number } };
+        const realName = stockRes?.data?.name?.trim();
+        if (realName && !realName.startsWith("股票" + symbol)) stockName = realName;
+        if (stockRes?.data?.latest_price != null && addForm.value.current_price == null) {
+          addForm.value.current_price = stockRes.data.latest_price;
+        }
+      } catch {
+        /* 忽略，使用用户输入 */
+      }
       await createAsset({
         symbol,
-        name: addForm.value.name!.trim(),
+        name: stockName || addForm.value.name!.trim() || symbol,
         quantity: addForm.value.quantity ?? 0,
         cost_price: addForm.value.cost_price,
         current_price: addForm.value.current_price,
@@ -198,7 +213,7 @@ async function submitAdd() {
   }
 }
 
-function openEditDialog(row: Asset) {
+async function openEditDialog(row: Asset) {
   editingId.value = row.id ?? null;
   editForm.value = {
     symbol: row.symbol,
@@ -209,6 +224,30 @@ function openEditDialog(row: Asset) {
     asset_type: row.asset_type,
   };
   editDialogVisible.value = true;
+  // 获取真实名称并更新
+  try {
+    const sym = row.symbol?.trim().split(".")[0];
+    if (!sym) return;
+    if (row.asset_type === "stock") {
+      const res = (await getStockInfo(sym)) as { data?: { name?: string; latest_price?: number } };
+      if (res?.data?.name?.trim()) {
+        editForm.value.name = res.data.name.trim();
+        if (res.data.latest_price != null && editForm.value.current_price == null) {
+          editForm.value.current_price = res.data.latest_price;
+        }
+      }
+    } else {
+      const res = (await getFundInfo(sym)) as { data?: { name?: string; nav?: number } };
+      if (res?.data?.name?.trim()) {
+        editForm.value.name = res.data.name.trim();
+        if (res.data.nav != null && editForm.value.current_price == null) {
+          editForm.value.current_price = res.data.nav;
+        }
+      }
+    }
+  } catch {
+    /* 忽略，保留原值 */
+  }
 }
 
 async function submitEdit() {
@@ -259,6 +298,29 @@ function marketValue(row: Asset) {
   return (row.quantity * price).toFixed(2);
 }
 
+function goToDetail(row: Asset) {
+  const sym = row.symbol?.trim().split(".")[0];
+  const type = row.asset_type === "stock" ? "stock" : "fund";
+  if (sym) router.push(`/holding/${type}/${encodeURIComponent(sym)}`);
+}
+
+const syncLoading = ref(false);
+async function handleSync() {
+  syncLoading.value = true;
+  try {
+    const res = (await syncAssets()) as { data?: { updated?: number; failed?: number; total?: number } };
+    const d = res?.data;
+    ElMessage.success(
+      d ? `同步完成：成功 ${d.updated ?? 0}，失败 ${d.failed ?? 0}` : "同步完成"
+    );
+    await loadSummary();
+  } catch {
+    ElMessage.error("同步失败");
+  } finally {
+    syncLoading.value = false;
+  }
+}
+
 onMounted(loadSummary);
 </script>
 
@@ -299,11 +361,24 @@ onMounted(loadSummary);
 
     <!-- 持仓列表 -->
     <ElCard shadow="never" class="card">
-      <template #header>当前持仓</template>
+      <template #header>
+        <span>当前持仓</span>
+        <ElButton
+          type="primary"
+          size="small"
+          :loading="syncLoading"
+          @click="handleSync"
+          style="margin-left: 12px"
+        >
+          同步
+        </ElButton>
+      </template>
       <ElTable
         :data="summary?.holdings ?? []"
         v-loading="loading"
         stripe
+        style="cursor: pointer"
+        @row-click="goToDetail"
       >
         <ElTableColumn prop="symbol" label="代码" width="100" />
         <ElTableColumn prop="name" label="名称" min-width="120" />
@@ -312,15 +387,19 @@ onMounted(loadSummary);
             {{ row.asset_type === "stock" ? "股票" : "基金" }}
           </template>
         </ElTableColumn>
-        <ElTableColumn prop="quantity" label="数量" width="100" align="right" />
+        <ElTableColumn prop="quantity" label="数量" width="100" align="right">
+          <template #default="{ row }">
+            {{ row.quantity != null ? Math.round(row.quantity) : "-" }}
+          </template>
+        </ElTableColumn>
         <ElTableColumn prop="cost_price" label="成本价" width="100" align="right">
           <template #default="{ row }">
-            {{ row.cost_price != null ? row.cost_price.toFixed(2) : "-" }}
+            {{ row.cost_price != null ? row.cost_price.toFixed(4) : "-" }}
           </template>
         </ElTableColumn>
         <ElTableColumn prop="current_price" label="现价" width="100" align="right">
           <template #default="{ row }">
-            {{ row.current_price != null ? row.current_price.toFixed(2) : "-" }}
+            {{ row.current_price != null ? row.current_price.toFixed(4) : "-" }}
           </template>
         </ElTableColumn>
         <ElTableColumn label="市值" width="100" align="right">
@@ -330,10 +409,10 @@ onMounted(loadSummary);
         </ElTableColumn>
         <ElTableColumn label="操作" width="140" fixed="right">
           <template #default="{ row }">
-            <ElButton type="primary" link size="small" @click="openEditDialog(row)">
+            <ElButton type="primary" link size="small" @click.stop="openEditDialog(row)">
               编辑
             </ElButton>
-            <ElButton type="danger" link size="small" @click="handleDelete(row)">
+            <ElButton type="danger" link size="small" @click.stop="handleDelete(row)">
               删除
             </ElButton>
           </template>

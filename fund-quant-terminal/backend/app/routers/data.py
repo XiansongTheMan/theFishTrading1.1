@@ -91,15 +91,49 @@ async def get_fund_info(fund_code: str) -> dict:
                     break
             if nav is None and nav_data:
                 nav = float(nav_data[-1].get("nav") or nav_data[-1].get("单位净值") or 0)
+        # 优先用 fund_list 查找（快），未找到则调用 get_fund_name 获取真实名称
         name = None
+        code_clean = fund_code.strip().replace(".OF", "")
         for f in fund_list:
-            c = str(f.get("code") or f.get("基金代码") or "")
-            if c.strip() == fund_code or c.replace(".OF", "").strip() == fund_code:
-                name = str(f.get("name") or f.get("基金简称") or fund_code)
+            c = str(f.get("code") or f.get("基金代码") or "").replace(".OF", "").strip()
+            if c == code_clean:
+                name = str(f.get("name") or f.get("基金简称") or "").strip()
                 break
+        if not name:
+            name = await data_service.get_fund_name(fund_code)
         return api_success(data={"fund_code": fund_code, "name": name or f"基金{fund_code}", "nav": nav})
     except Exception as e:
         logger.exception("get_fund_info 异常 fund_code=%s: %s", fund_code, e)
+        return api_error(code=500, message=str(e))
+
+
+@router.get("/stock/{symbol}")
+async def get_stock_info(symbol: str) -> dict:
+    """
+    获取股票名称与最新价，用于添加股票时自动填充
+    """
+    try:
+        symbol = (symbol or "").strip().split(".")[0]
+        if not symbol:
+            return api_error(code=400, message="股票代码不能为空")
+        name = await data_service.get_stock_name(symbol)
+        # 可选：获取最新价
+        daily = await data_service.get_stock_daily(symbol=symbol, start=None, end=None)
+        latest_price = None
+        if daily and len(daily) > 0:
+            last_rec = daily[-1]
+            latest_price = last_rec.get("收盘") or last_rec.get("close")
+            if latest_price is not None:
+                latest_price = float(latest_price)
+        return api_success(
+            data={
+                "symbol": symbol,
+                "name": name or f"股票{symbol}",
+                "latest_price": latest_price,
+            }
+        )
+    except Exception as e:
+        logger.exception("get_stock_info 异常 symbol=%s: %s", symbol, e)
         return api_error(code=500, message=str(e))
 
 
