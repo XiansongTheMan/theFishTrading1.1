@@ -45,7 +45,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: "/grok-prompt",
     name: "GrokPrompt",
-    component: () => import("../views/GrokPromptView.vue"),
+    component: () => import("../views/GrokPrompt.vue"),
     meta: { title: "Grok AI 角色设定" },
   },
 ];
