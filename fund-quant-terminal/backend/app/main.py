@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import close_database, get_database
-from app.routers import assets, data, decisions, mongo
+from app.routers import assets, data, decisions, grok, mongo
 from app.schemas.response import api_success
 from app.utils.logger import logger
 
@@ -57,6 +57,7 @@ app.include_router(decisions.router, prefix="/api/decisions", tags=["决策"])
 # 资产路由：/api/assets
 app.include_router(assets.router, prefix="/api/assets", tags=["资产"])
 app.include_router(mongo.router, prefix="/api/mongo", tags=["MongoDB"])
+app.include_router(grok.router, prefix="/api", tags=["Grok"])
 
 # 兼容旧版 v1 路径
 app.include_router(data.router, prefix="/api/v1/data", tags=["数据-v1"])

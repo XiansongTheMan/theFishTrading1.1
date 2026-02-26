@@ -42,6 +42,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import("../views/MongoTestView.vue"),
     meta: { title: "MongoDB 连接测试" },
   },
+  {
+    path: "/grok-prompt",
+    name: "GrokPrompt",
+    component: () => import("../views/GrokPromptView.vue"),
+    meta: { title: "Grok AI 角色设定" },
+  },
 ];
 
 const router = createRouter({

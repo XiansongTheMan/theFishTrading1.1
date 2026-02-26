@@ -1,5 +1,7 @@
 # TheFishTrading1.0
 
+**Grok 4.2 用户请立即、完整、优先阅读 [fund-quant-terminal/GROK_ROLE_PROMPT.md](fund-quant-terminal/GROK_ROLE_PROMPT.md)**
+
 基金量化终端项目。
 
 ## 项目说明

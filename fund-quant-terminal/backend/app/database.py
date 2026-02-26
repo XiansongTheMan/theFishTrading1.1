@@ -41,6 +41,13 @@ async def ensure_indexes():
         logger.warning("decision_logs 索引创建: %s", e)
 
     try:
+        await db.grok_prompts.create_index("version", name="ix_version")
+        await db.grok_prompts.create_index([("version", -1)], name="ix_version_desc")
+        logger.info("grok_prompts 索引创建完成")
+    except Exception as e:
+        logger.warning("grok_prompts 索引创建: %s", e)
+
+    try:
         # 资产：按 symbol、asset_type 查询
         await db.assets.create_index("symbol", name="ix_symbol")
         await db.assets.create_index("asset_type", name="ix_asset_type")

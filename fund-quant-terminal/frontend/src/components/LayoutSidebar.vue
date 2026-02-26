@@ -26,6 +26,7 @@ const menuItems = [
   { path: "/data", name: "数据终端", icon: "DataLine" },
   { path: "/decisions", name: "决策日志", icon: "Document" },
   { path: "/curve", name: "资产曲线", icon: "TrendCharts" },
+  { path: "/grok-prompt", name: "Grok AI 角色设定", icon: "UserFilled" },
   { path: "/settings", name: "设置", icon: "Setting" },
   { path: "/mongo-test", name: "MongoDB 连接测试", icon: "Connection" },
 ];

@@ -1,5 +1,7 @@
 # Fund Quant Terminal - 基金量化终端
 
+**Grok 4.2 用户请立即、完整、优先阅读 [GROK_ROLE_PROMPT.md](GROK_ROLE_PROMPT.md)**
+
 生产级基金量化终端，支持 AKShare/Tushare 数据、决策日志、资产曲线，为未来与 Grok 4.2 衔接预留接口。
 
 ---
@@ -84,7 +86,9 @@ npm run dev
 
 ---
 
-## 四、与 Grok 4.2 衔接方式
+## 四、与 Grok 4.2 衔接方式（Grok 协作指南）
+
+> **重要**：请优先阅读 [GROK_ROLE_PROMPT.md](GROK_ROLE_PROMPT.md)，该文件定义了 Grok 的强制系统角色提示词。
 
 ### 工作流建议
 
@@ -163,6 +167,9 @@ fund-quant-terminal/
 | POST | `/api/assets/update` | 更新资产 |
 | POST | `/api/data/fetch` | 拉取数据 |
 | GET | `/api/data/history` | 历史数据 |
+| GET | `/api/grok-prompt` | 获取 Grok 提示词（最新或指定版本） |
+| POST | `/api/grok-prompt` | 保存新版本 |
+| GET | `/api/grok-prompt/history` | 历史版本列表 |
 
 ---
 
