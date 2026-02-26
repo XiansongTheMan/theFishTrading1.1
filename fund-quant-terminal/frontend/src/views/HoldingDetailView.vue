@@ -4,9 +4,9 @@
   =====================================================
 -->
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElCard, ElButton, ElEmpty, ElRadioGroup, ElRadioButton, ElDialog, ElForm, ElFormItem, ElInputNumber, ElInput, ElMessage, ElMessageBox } from "element-plus";
+import { ElCard, ElButton, ElEmpty, ElRadioGroup, ElRadioButton, ElDialog, ElForm, ElFormItem, ElInputNumber, ElInput, ElMessage, ElMessageBox, ElTooltip } from "element-plus";
 import * as echarts from "echarts";
 import { fetchData, getStockDaily } from "../api/data";
 import {
@@ -15,6 +15,7 @@ import {
   getHoldingSummary,
   createTransaction,
   deleteTransaction,
+  clearHoldingTransactions,
   type HoldingTransaction,
   type HoldingSummary,
 } from "../api/assets";
@@ -185,14 +186,29 @@ function openTxDialog(type: "buy" | "sell", date?: string, price?: number) {
 
 async function submitTx() {
   const { type, date, price, amount } = txForm.value;
-  if (!date || !amount || amount <= 0 || !price || price <= 0) {
-    ElMessage.warning("请填写日期、单价和金额");
+  if (!date || !(date + "").trim()) {
+    ElMessage.warning("请填写交易日期");
+    return;
+  }
+  if (!amount || amount <= 0 || !price || price <= 0) {
+    ElMessage.warning("请填写有效的单价和金额（均需大于 0）");
     return;
   }
   const quantity = amount / price;
   if (quantity <= 0) {
     ElMessage.warning("金额与单价无效，无法计算数量");
     return;
+  }
+  if (type === "sell" && summary.value) {
+    const holdQty = summary.value.quantity ?? 0;
+    if (quantity > holdQty) {
+      ElMessage.warning(`卖出数量不能超过持仓 ${holdQty.toFixed(2)}`);
+      return;
+    }
+    if (holdQty <= 0) {
+      ElMessage.warning("当前无持仓，无法卖出");
+      return;
+    }
   }
   txSubmitting.value = true;
   try {
@@ -208,6 +224,8 @@ async function submitTx() {
     ElMessage.success("交易已记录");
     txDialogVisible.value = false;
     await loadData();
+    await nextTick();
+    renderChart();
   } catch (e) {
     ElMessage.error((e as Error)?.message || "提交失败");
   } finally {
@@ -224,12 +242,38 @@ async function handleDeleteTx(t: HoldingTransaction) {
       cancelButtonText: "取消",
       type: "warning",
     });
-    await deleteTransaction(id);
+    await deleteTransaction(assetType.value, symbol.value, id);
     ElMessage.success("已删除");
     await loadData();
+    await nextTick();
+    renderChart();
   } catch (e) {
     if ((e as { type?: string })?.type !== "cancel") {
       ElMessage.error((e as Error)?.message || "删除失败");
+    }
+  }
+}
+
+async function handleClearAll() {
+  try {
+    await ElMessageBox.confirm(
+      "确定强制清空该基金的全部历史操作？将同时移除对应持仓，此操作不可恢复。",
+      "强制清空",
+      {
+        confirmButtonText: "清空",
+        cancelButtonText: "取消",
+        type: "warning",
+      }
+    );
+    const res = (await clearHoldingTransactions(assetType.value, symbol.value)) as { data?: { deleted?: number } };
+    const count = res?.data?.deleted ?? 0;
+    ElMessage.success(`已清空 ${count} 条历史操作`);
+    await loadData();
+    await nextTick();
+    renderChart();
+  } catch (e) {
+    if ((e as { type?: string })?.type !== "cancel") {
+      ElMessage.error((e as Error)?.message || "清空失败");
     }
   }
 }
@@ -254,6 +298,8 @@ function renderChart() {
       type: "line",
       data: pctValues,
       smooth: false,
+      showSymbol: false,
+      z: 1,
     },
   ];
   if (buyPoints.length) {
@@ -262,9 +308,11 @@ function renderChart() {
       type: "scatter",
       data: buyPoints.map(([d, v]) => [d, v]),
       symbol: "circle",
-      symbolSize: 12,
+      symbolSize: 14,
+      symbolKeepAspect: false,
+      z: 10,
       itemStyle: { color: "#f56c6c" },
-      emphasis: { scale: 1.2 },
+      emphasis: { scale: 1.3 },
     } as echarts.SeriesOption);
   }
   if (sellPoints.length) {
@@ -273,9 +321,11 @@ function renderChart() {
       type: "scatter",
       data: sellPoints.map(([d, v]) => [d, v]),
       symbol: "circle",
-      symbolSize: 12,
+      symbolSize: 14,
+      symbolKeepAspect: false,
+      z: 10,
       itemStyle: { color: "#67c23a" },
-      emphasis: { scale: 1.2 },
+      emphasis: { scale: 1.3 },
     } as echarts.SeriesOption);
   }
 
@@ -287,17 +337,20 @@ function renderChart() {
     tooltip: {
       trigger: "axis",
       formatter: (params: unknown) => {
-        const pr = params as { name: string; dataIndex: number }[];
+        const pr = params as { name: string; dataIndex: number; value?: number | number[] }[];
         if (!pr?.length) return "";
         const p = pr[0];
-        const idx = p.dataIndex ?? 0;
+        const idx = data.findIndex((d) => d.date === p.name) ?? p.dataIndex ?? 0;
         const rawVal = data[idx]?.value;
         const valLabel = isFund.value ? "净值" : "收盘价";
         let s = p.name + "<br/>";
         if (rawVal != null) s += `${valLabel}: ${Number(rawVal).toFixed(4)}<br/>`;
-        (pr as { marker: string; seriesName: string; value: number }[]).forEach((item) => {
-          const v = Number(item.value);
-          s += `${item.marker}${item.seriesName}: ${v >= 0 ? "+" : ""}${v.toFixed(2)}%<br/>`;
+        (pr as { marker: string; seriesName: string; value?: number | number[] }[]).forEach((item) => {
+          const val = item.value;
+          const v = Array.isArray(val) ? (val[1] as number) : Number(val);
+          if (typeof v === "number" && !Number.isNaN(v)) {
+            s += `${item.marker}${item.seriesName}: ${v >= 0 ? "+" : ""}${v.toFixed(2)}%<br/>`;
+          }
         });
         return s;
       },
@@ -315,14 +368,14 @@ function renderChart() {
   });
 
   chartInstance.off("click");
-  chartInstance.on("click", (params: { componentType: string; name?: string; seriesName?: string }) => {
+  chartInstance.on("click", (params: { componentType: string; name?: string; seriesName?: string; seriesType?: string; seriesIndex?: number; data?: unknown }) => {
     if (params.componentType !== "series") return;
-    const date = params.name;
+    const date = (params.name ?? (Array.isArray(params.data) ? params.data[0] : null)) as string | null;
     if (!date) return;
     const idx = data.findIndex((d) => d.date === date);
     const price = idx >= 0 ? data[idx].value : 0;
-    const txType = params.seriesName === "卖出" ? "sell" : "buy";
-    openTxDialog(txType, date, price);
+    const clickedSell = params.seriesName === "卖出" || (params.seriesType === "scatter" && sellPoints.length > 0 && params.seriesIndex === series.length - 1);
+    openTxDialog(clickedSell ? "sell" : "buy", date, price);
   });
 }
 
@@ -413,7 +466,20 @@ onMounted(() => {
     <!-- 历史操作 -->
     <ElCard shadow="never" class="history-card">
       <template #header>
-        <span>历史操作</span>
+        <div class="history-header">
+          <span>历史操作</span>
+          <ElTooltip content="清空该基金全部历史操作，并移除对应持仓" placement="top">
+            <ElButton
+              v-if="transactions.length > 0"
+              type="danger"
+              plain
+              size="small"
+              @click="handleClearAll"
+            >
+              强制清空
+            </ElButton>
+          </ElTooltip>
+        </div>
       </template>
       <div v-if="transactions.length === 0" class="empty-tip">
         <ElEmpty description="暂无交易记录" :image-size="60" />
@@ -430,7 +496,9 @@ onMounted(() => {
           <span class="qty">{{ t.quantity }}</span>
           <span class="price">¥{{ t.price.toFixed(4) }}</span>
           <span class="amount">¥{{ (t.amount ?? t.quantity * t.price).toFixed(2) }}</span>
-          <ElButton type="danger" link size="small" @click="handleDeleteTx(t)">删除</ElButton>
+          <ElTooltip content="删除该笔交易记录，并反向调整持仓" placement="top">
+            <ElButton type="danger" link size="small" @click="handleDeleteTx(t)">删除</ElButton>
+          </ElTooltip>
         </div>
       </div>
     </ElCard>
@@ -438,10 +506,14 @@ onMounted(() => {
     <!-- 买卖弹窗 -->
     <ElDialog
       v-model="txDialogVisible"
-      :title="txForm.type === 'buy' ? '买入' : '卖出'"
+      title="交易操作"
       width="360px"
       :close-on-click-modal="false"
     >
+      <div class="tx-type-toggle">
+        <ElButton :type="txForm.type === 'buy' ? 'primary' : 'default'" @click="txForm.type = 'buy'">买入</ElButton>
+        <ElButton :type="txForm.type === 'sell' ? 'primary' : 'default'" @click="txForm.type = 'sell'">卖出</ElButton>
+      </div>
       <ElForm :model="txForm" label-width="80px">
         <ElFormItem label="日期" required>
           <ElInput v-model="txForm.date" placeholder="YYYY-MM-DD" />
@@ -533,6 +605,16 @@ onMounted(() => {
   margin-bottom: 20px;
 }
 
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.history-header .el-button {
+  flex-shrink: 0;
+}
+
 .history-list {
   display: flex;
   flex-direction: column;
@@ -603,6 +685,12 @@ onMounted(() => {
 .empty-tip {
   padding: 48px 0;
   text-align: center;
+}
+
+.tx-type-toggle {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
 .computed-qty {

@@ -234,7 +234,7 @@ async def get_holding_summary(
     symbol: str,
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict:
-    """获取该持仓的汇总：投入资金、持有收益"""
+    """获取该持仓的汇总：投入资金、持有收益，当前市值使用真实行情价"""
     try:
         sym = (symbol or "").strip().split(".")[0]
         at = (asset_type or "fund").lower()
@@ -250,9 +250,26 @@ async def get_holding_summary(
             cost_price = float(asset.get("cost_price") or 0)
             current_price = float(asset.get("current_price") or cost_price or 0)
             name = asset.get("name") or sym
-        # 投入资金 = 成本 = 数量 * 成本价
+        if quantity > 0:
+            try:
+                if at == "fund":
+                    nav_list = await data_service.get_fund_nav(sym)
+                    if nav_list:
+                        for r in reversed(nav_list):
+                            p = r.get("nav") or r.get("单位净值")
+                            if p is not None:
+                                current_price = float(p)
+                                break
+                else:
+                    daily_list = await data_service.get_stock_daily(symbol=sym)
+                    if daily_list:
+                        last_rec = daily_list[-1]
+                        p = last_rec.get("收盘") or last_rec.get("close")
+                        if p is not None:
+                            current_price = float(p)
+            except Exception as e:
+                logger.debug("get_holding_summary 拉取实时价失败 %s %s: %s", sym, at, e)
         invested = round(quantity * cost_price, 2)
-        # 当前市值
         market_value = round(quantity * current_price, 2)
         # 持有收益 = 市值 - 成本
         profit = round(market_value - invested, 2)
@@ -280,7 +297,7 @@ async def create_transaction(
     item: HoldingTransactionCreate,
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict:
-    """添加买入/卖出交易，并更新资产持仓"""
+    """添加买入/卖出交易，并更新资产持仓（无效交易不会写入）"""
     try:
         sym = (item.symbol or "").strip().split(".")[0]
         at = (item.asset_type or "fund").lower()
@@ -288,11 +305,27 @@ async def create_transaction(
             return api_error(code=400, message="标的代码不能为空")
         if item.type not in ("buy", "sell"):
             return api_error(code=400, message="type 必须为 buy 或 sell")
+        if item.quantity <= 0 or item.price <= 0:
+            return api_error(code=400, message="数量和单价必须大于 0")
         amount = item.amount if item.amount is not None else round(item.quantity * item.price, 2)
+        if amount <= 0:
+            return api_error(code=400, message="金额必须大于 0")
+        if not item.date or len(item.date.strip()) < 8:
+            return api_error(code=400, message="请填写有效交易日期")
+
+        coll = db[COLLECTION]
+        asset = await coll.find_one({"symbol": sym, "asset_type": at})
+        if item.type == "sell":
+            if not asset:
+                return api_error(code=400, message="无此持仓，无法卖出")
+            old_qty = float(asset.get("quantity") or 0)
+            if item.quantity > old_qty:
+                return api_error(code=400, message=f"卖出数量不能超过持仓 {old_qty}")
+
         tx_doc = {
             "symbol": sym,
             "asset_type": at,
-            "date": item.date,
+            "date": item.date.strip(),
             "type": item.type,
             "quantity": item.quantity,
             "price": item.price,
@@ -302,9 +335,6 @@ async def create_transaction(
         result = await db[TRANSACTION_COLLECTION].insert_one(tx_doc)
         tx_doc["_id"] = result.inserted_id
 
-        # 更新 assets 持仓
-        coll = db[COLLECTION]
-        asset = await coll.find_one({"symbol": sym, "asset_type": at})
         if item.type == "buy":
             if asset:
                 old_qty = float(asset.get("quantity") or 0)
@@ -326,12 +356,8 @@ async def create_transaction(
                     "created_at": datetime.utcnow(),
                     "updated_at": datetime.utcnow(),
                 })
-        else:  # sell
-            if not asset:
-                return api_error(code=400, message="无此持仓，无法卖出")
+        else:  # sell（已在插入前校验）
             old_qty = float(asset.get("quantity") or 0)
-            if item.quantity > old_qty:
-                return api_error(code=400, message=f"卖出数量不能超过持仓 {old_qty}")
             new_qty = old_qty - item.quantity
             cost_price = float(asset.get("cost_price") or 0)
             updates = {"quantity": new_qty, "updated_at": datetime.utcnow()}
@@ -347,8 +373,10 @@ async def create_transaction(
         return api_error(code=500, message=str(e))
 
 
-@router.delete("/transactions/{transaction_id}")
+@router.delete("/history/{asset_type}/{symbol}/transactions/{transaction_id}")
 async def delete_transaction(
+    asset_type: str,
+    symbol: str,
     transaction_id: str,
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict:
@@ -408,6 +436,31 @@ async def delete_transaction(
         return api_success(data=None, message="交易已删除")
     except Exception as e:
         logger.exception("delete_transaction 异常: %s", e)
+        return api_error(code=500, message=str(e))
+
+
+@router.post("/history/{asset_type}/{symbol}/transactions/clear")
+async def clear_holding_transactions(
+    asset_type: str,
+    symbol: str,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict:
+    """强制清空该基金/股票的全部历史操作，并移除对应持仓"""
+    try:
+        sym = (symbol or "").strip().split(".")[0]
+        at = (asset_type or "fund").lower()
+        if not sym:
+            return api_error(code=400, message="标的代码不能为空")
+        coll_tx = db[TRANSACTION_COLLECTION]
+        coll_asset = db[COLLECTION]
+        result = await coll_tx.delete_many({"symbol": sym, "asset_type": at})
+        await coll_asset.delete_many({"symbol": sym, "asset_type": at})
+        return api_success(
+            data={"deleted": result.deleted_count},
+            message=f"已清空 {result.deleted_count} 条历史操作及对应持仓",
+        )
+    except Exception as e:
+        logger.exception("clear_holding_transactions 异常: %s", e)
         return api_error(code=500, message=str(e))
 
 

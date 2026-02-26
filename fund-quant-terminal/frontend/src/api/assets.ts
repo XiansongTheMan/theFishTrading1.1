@@ -101,5 +101,16 @@ export const createTransaction = (data: {
 }) =>
   request.post<{ data: HoldingTransaction }>("/assets/transactions", data);
 
-export const deleteTransaction = (transactionId: string) =>
-  request.delete(`/assets/transactions/${encodeURIComponent(transactionId)}`);
+export const deleteTransaction = (
+  assetType: string,
+  symbol: string,
+  transactionId: string
+) =>
+  request.delete(
+    `/assets/history/${encodeURIComponent(assetType)}/${encodeURIComponent(symbol.trim().split(".")[0])}/transactions/${encodeURIComponent(transactionId)}`
+  );
+
+export const clearHoldingTransactions = (assetType: string, symbol: string) =>
+  request.post(
+    `/assets/history/${encodeURIComponent(assetType)}/${encodeURIComponent(symbol.trim().split(".")[0])}/transactions/clear`
+  );
