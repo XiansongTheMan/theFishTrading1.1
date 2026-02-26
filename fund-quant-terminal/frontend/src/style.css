@@ -17,6 +17,18 @@ body {
   min-height: 100vh;
 }
 
+/* 消息提示统一在顶部显示 */
+.el-message {
+  top: 20px !important;
+}
+
+.el-message--success,
+.el-message--error,
+.el-message--warning,
+.el-message--info {
+  top: 20px !important;
+}
+
 /* 深色模式 */
 html.dark {
   color-scheme: dark;

@@ -1,6 +1,7 @@
 <!-- Grok AI 角色设定（实时可编辑） -->
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
+import MarkdownIt from "markdown-it";
 import {
   ElCard,
   ElInput,
@@ -102,8 +103,11 @@ watch(selectedVersion, (v) => {
   if (v != null) loadVersion(v);
 });
 
-// Markdown 简易预览：保留换行与格式
-const previewText = computed(() => promptContent.value || "");
+const md = new MarkdownIt({ html: false });
+const previewHtml = computed(() => {
+  const raw = promptContent.value || "";
+  return raw ? md.render(raw) : "";
+});
 
 onMounted(loadLatest);
 </script>
@@ -130,7 +134,7 @@ onMounted(loadLatest);
 
       <div class="preview-section">
         <div class="preview-label">预览</div>
-        <pre v-if="previewText" class="preview-area">{{ previewText }}</pre>
+        <div v-if="previewHtml" class="preview-area markdown-body" v-html="previewHtml"></div>
         <ElEmpty v-else description="暂无内容" :image-size="60" />
       </div>
 
@@ -210,12 +214,76 @@ onMounted(loadLatest);
 .preview-area {
   margin: 0;
   padding: 8px 0;
-  font-family: inherit;
   font-size: 0.9rem;
   line-height: 1.6;
   color: var(--el-text-color-primary);
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.preview-area.markdown-body :deep(h1),
+.preview-area.markdown-body :deep(h2),
+.preview-area.markdown-body :deep(h3) {
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+
+.preview-area.markdown-body :deep(h1) { font-size: 1.4em; }
+.preview-area.markdown-body :deep(h2) { font-size: 1.2em; }
+.preview-area.markdown-body :deep(h3) { font-size: 1.05em; }
+
+.preview-area.markdown-body :deep(p) {
+  margin: 0.5em 0;
+}
+
+.preview-area.markdown-body :deep(ul),
+.preview-area.markdown-body :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.preview-area.markdown-body :deep(code) {
+  padding: 0.15em 0.4em;
+  background: var(--el-fill-color);
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.preview-area.markdown-body :deep(pre) {
+  margin: 0.5em 0;
+  padding: 12px;
+  background: var(--el-fill-color);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.preview-area.markdown-body :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.preview-area.markdown-body :deep(blockquote) {
+  margin: 0.5em 0;
+  padding-left: 1em;
+  border-left: 4px solid var(--el-border-color);
+  color: var(--el-text-color-secondary);
+}
+
+.preview-area.markdown-body :deep(table) {
+  margin: 0.5em 0;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.preview-area.markdown-body :deep(th),
+.preview-area.markdown-body :deep(td) {
+  padding: 6px 10px;
+  border: 1px solid var(--el-border-color);
+}
+
+.preview-area.markdown-body :deep(th) {
+  background: var(--el-fill-color);
+  font-weight: 600;
 }
 
 .actions {

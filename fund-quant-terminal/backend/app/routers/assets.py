@@ -63,6 +63,8 @@ async def create_asset(
     try:
         coll = db[COLLECTION]
         doc = item.model_dump()
+        doc["created_at"] = datetime.utcnow()
+        doc["updated_at"] = datetime.utcnow()
         result = await coll.insert_one(doc)
         doc["_id"] = result.inserted_id
         return api_success(data=_serialize_doc(doc))

@@ -5,7 +5,7 @@
   =====================================================
 -->
 <script setup lang="ts">
-import { watch } from "vue";
+import { computed, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   ElContainer,
@@ -13,6 +13,7 @@ import {
   ElMain,
   ElMenu,
   ElMenuItem,
+  ElSubMenu,
   ElConfigProvider,
 } from "element-plus";
 import zhCn from "element-plus/dist/locale/zh-cn.mjs";
@@ -21,15 +22,26 @@ import { useAppStore } from "../stores/app";
 const route = useRoute();
 const appStore = useAppStore();
 
-const menuItems = [
+const topMenuItems = [
   { path: "/", name: "首页", icon: "HomeFilled" },
   { path: "/data", name: "数据终端", icon: "DataLine" },
   { path: "/decisions", name: "决策日志", icon: "Document" },
   { path: "/curve", name: "资产曲线", icon: "TrendCharts" },
-  { path: "/grok-prompt", name: "Grok AI 角色设定", icon: "UserFilled" },
-  { path: "/settings", name: "设置", icon: "Setting" },
-  { path: "/mongo-test", name: "MongoDB 连接测试", icon: "Connection" },
+  { path: "/assets", name: "资产", icon: "Wallet" },
 ];
+
+const settingsSubItems = [
+  { path: "/settings", name: "通用" },
+  { path: "/grok-prompt", name: "Grok AI 角色设定" },
+  { path: "/token", name: "Token" },
+  { path: "/mongo-test", name: "MongoDB 连接测试" },
+];
+
+const defaultOpeneds = computed(() =>
+  settingsSubItems.some((i) => route.path === i.path || route.path.startsWith(i.path + "/"))
+    ? ["settings"]
+    : []
+);
 
 watch(
   () => appStore.darkMode,
@@ -51,6 +63,7 @@ watch(
         <div class="logo">基金量化终端</div>
         <ElMenu
           :default-active="route.path"
+          :default-openeds="defaultOpeneds"
           router
           class="sidebar-menu"
           background-color="var(--el-bg-color)"
@@ -58,12 +71,22 @@ watch(
           active-text-color="var(--el-color-primary)"
         >
           <ElMenuItem
-            v-for="item in menuItems"
+            v-for="item in topMenuItems"
             :key="item.path"
             :index="item.path"
           >
             <span>{{ item.name }}</span>
           </ElMenuItem>
+          <ElSubMenu index="settings">
+            <template #title>设置</template>
+            <ElMenuItem
+              v-for="item in settingsSubItems"
+              :key="item.path"
+              :index="item.path"
+            >
+              <span>{{ item.name }}</span>
+            </ElMenuItem>
+          </ElSubMenu>
         </ElMenu>
       </ElAside>
       <ElMain class="main-content">

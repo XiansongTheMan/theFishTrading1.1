@@ -71,6 +71,38 @@ async def data_history(
 # ---------- 原有接口（统一响应格式） ----------
 
 
+@router.get("/fund/{fund_code}")
+async def get_fund_info(fund_code: str) -> dict:
+    """
+    获取基金名称与最新净值，用于添加基金时自动填充
+    """
+    try:
+        fund_code = (fund_code or "").strip()
+        if not fund_code:
+            return api_error(code=400, message="基金代码不能为空")
+        nav_data = await data_service.get_fund_nav(fund_code)
+        fund_list = await data_service.get_fund_list(limit=5000)
+        nav = None
+        if nav_data:
+            for r in reversed(nav_data):
+                n = r.get("nav") or r.get("单位净值")
+                if n is not None:
+                    nav = float(n)
+                    break
+            if nav is None and nav_data:
+                nav = float(nav_data[-1].get("nav") or nav_data[-1].get("单位净值") or 0)
+        name = None
+        for f in fund_list:
+            c = str(f.get("code") or f.get("基金代码") or "")
+            if c.strip() == fund_code or c.replace(".OF", "").strip() == fund_code:
+                name = str(f.get("name") or f.get("基金简称") or fund_code)
+                break
+        return api_success(data={"fund_code": fund_code, "name": name or f"基金{fund_code}", "nav": nav})
+    except Exception as e:
+        logger.exception("get_fund_info 异常 fund_code=%s: %s", fund_code, e)
+        return api_error(code=500, message=str(e))
+
+
 @router.get("/funds")
 async def get_fund_list(limit: int = Query(100, ge=1, le=500)) -> dict:
     """获取基金列表"""

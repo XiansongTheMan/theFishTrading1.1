@@ -15,16 +15,28 @@ class DataFetcherService:
 
     def __init__(self) -> None:
         self._ts_pro = None
-        if settings.TUSHARE_TOKEN:
-            try:
-                import tushare as ts
+        self._tushare_token = settings.TUSHARE_TOKEN or ""
+        if self._tushare_token:
+            self._init_tushare(self._tushare_token)
 
-                ts.set_token(settings.TUSHARE_TOKEN)
-                self._ts_pro = ts.pro_api()
-                logger.info("Tushare pro_api 初始化成功")
-            except Exception as e:
-                logger.warning("Tushare 初始化失败: %s", e)
-                self._ts_pro = None
+    def _init_tushare(self, token: str) -> None:
+        self._tushare_token = token or ""
+        self._ts_pro = None
+        if not self._tushare_token:
+            return
+        try:
+            import tushare as ts
+
+            ts.set_token(self._tushare_token)
+            self._ts_pro = ts.pro_api()
+            logger.info("Tushare pro_api 初始化成功")
+        except Exception as e:
+            logger.warning("Tushare 初始化失败: %s", e)
+            self._ts_pro = None
+
+    def update_tushare_token(self, token: str) -> None:
+        """运行时更新 Tushare Token 并重新初始化"""
+        self._init_tushare(token or "")
 
     async def get_fund_nav(self, fund_code: str) -> List[Dict[str, Any]]:
         """

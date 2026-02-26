@@ -31,6 +31,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: "资产曲线" },
   },
   {
+    path: "/assets",
+    name: "Assets",
+    component: () => import("../views/AssetsView.vue"),
+    meta: { title: "资产" },
+  },
+  {
+    path: "/token",
+    name: "Token",
+    component: () => import("../views/TokenView.vue"),
+    meta: { title: "Token" },
+  },
+  {
     path: "/settings",
     name: "Settings",
     component: () => import("../views/SettingsView.vue"),

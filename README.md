@@ -1,5 +1,5 @@
-Grok 4.2 用户请立即、完整、优先阅读 fund-quant-terminal/GROK_ROLE_PROMPT.md
-（本文件定义了Grok在本项目的专属角色与全部工作流）
+Grok 4.2 用户请立即、完整、优先阅读 GROK_ROLE_PROMPT.md（位于项目根目录）
+（本文件定义了 Grok 在本项目的专属角色与全部工作流，由后端启动时从数据库同步）
 
 
 # Fund Quant Terminal - 基金量化终端
