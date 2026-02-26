@@ -126,7 +126,8 @@ class DataFetcherService:
         def _fetch() -> List[Dict[str, Any]]:
             try:
                 import akshare as ak
-                df = ak.fund_open_fund_info_em(symbol=fund_code.strip(), indicator="单位净值走势")
+                code = fund_code.strip().split(".")[0]
+                df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
                 if df is None or df.empty:
                     return []
                 # 统一列名: 净值日期->date, 单位净值->nav, 日增长率->daily_return

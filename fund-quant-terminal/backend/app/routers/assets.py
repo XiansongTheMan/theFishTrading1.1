@@ -358,14 +358,12 @@ async def create_transaction(
                 })
         else:  # sell（已在插入前校验）
             old_qty = float(asset.get("quantity") or 0)
-            new_qty = old_qty - item.quantity
+            new_qty = max(0, old_qty - item.quantity)
             cost_price = float(asset.get("cost_price") or 0)
-            updates = {"quantity": new_qty, "updated_at": datetime.utcnow()}
-            if new_qty <= 0:
-                await coll.delete_one({"_id": asset["_id"]})
-            else:
-                updates["cost_price"] = cost_price
-                await coll.update_one({"_id": asset["_id"]}, {"$set": updates})
+            await coll.update_one(
+                {"_id": asset["_id"]},
+                {"$set": {"quantity": new_qty, "cost_price": cost_price, "updated_at": datetime.utcnow()}},
+            )
 
         return api_success(data=_serialize_doc(tx_doc), message="交易记录已添加")
     except Exception as e:
@@ -403,14 +401,11 @@ async def delete_transaction(
                 old_qty = new_qty - qty
                 if old_qty < 0:
                     return api_error(code=400, message="无法删除：会导致持仓数量为负")
-                if old_qty <= 0:
-                    await coll_asset.delete_one({"_id": asset["_id"]})
-                else:
-                    old_cost = (new_qty * new_cost - qty * price) / old_qty
-                    await coll_asset.update_one(
-                        {"_id": asset["_id"]},
-                        {"$set": {"quantity": old_qty, "cost_price": old_cost, "updated_at": datetime.utcnow()}},
-                    )
+                cost_price = float(asset.get("cost_price") or 0) if old_qty <= 0 else (new_qty * new_cost - qty * price) / old_qty
+                await coll_asset.update_one(
+                    {"_id": asset["_id"]},
+                    {"$set": {"quantity": max(0, old_qty), "cost_price": cost_price, "updated_at": datetime.utcnow()}},
+                )
             else:
                 return api_error(code=400, message="无对应持仓，无法反向删除买入")
         else:
@@ -445,7 +440,7 @@ async def clear_holding_transactions(
     symbol: str,
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict:
-    """强制清空该基金/股票的全部历史操作，并移除对应持仓"""
+    """强制清空该基金/股票的全部历史操作，持仓数量置零但保留资产记录"""
     try:
         sym = (symbol or "").strip().split(".")[0]
         at = (asset_type or "fund").lower()
@@ -454,10 +449,14 @@ async def clear_holding_transactions(
         coll_tx = db[TRANSACTION_COLLECTION]
         coll_asset = db[COLLECTION]
         result = await coll_tx.delete_many({"symbol": sym, "asset_type": at})
-        await coll_asset.delete_many({"symbol": sym, "asset_type": at})
+        # 将持仓数量置零，保留资产记录（用于关注）
+        await coll_asset.update_many(
+            {"symbol": sym, "asset_type": at},
+            {"$set": {"quantity": 0, "updated_at": datetime.utcnow()}},
+        )
         return api_success(
             data={"deleted": result.deleted_count},
-            message=f"已清空 {result.deleted_count} 条历史操作及对应持仓",
+            message=f"已清空 {result.deleted_count} 条历史操作",
         )
     except Exception as e:
         logger.exception("clear_holding_transactions 异常: %s", e)

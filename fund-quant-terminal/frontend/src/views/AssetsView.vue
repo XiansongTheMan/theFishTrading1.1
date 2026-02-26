@@ -138,8 +138,8 @@ async function submitAdd() {
   if (isFund) {
     const amount = addForm.value.initial_amount ?? 0;
     const loss = addForm.value.initial_loss ?? 0;
-    if (amount <= 0) {
-      ElMessage.warning("初始持有金额需大于 0");
+    if (amount < 0) {
+      ElMessage.warning("初始持有金额不能为负");
       return;
     }
     if (loss < 0) {
@@ -171,7 +171,7 @@ async function submitAdd() {
       const loss = addForm.value.initial_loss ?? 0;
       const cost = amount + loss;
       const nav = info.nav;
-      const quantity = amount / nav;
+      const quantity = amount > 0 && nav > 0 ? amount / nav : 0;
       const cost_price = quantity > 0 ? cost / quantity : nav;
       await createAsset({
         symbol,
@@ -207,7 +207,8 @@ async function submitAdd() {
     addDialogVisible.value = false;
     await loadSummary();
   } catch (e) {
-    ElMessage.error("添加失败");
+    const msg = (e as Error)?.message || "添加失败";
+    ElMessage.error(msg);
   } finally {
     addSaving.value = false;
   }
@@ -402,7 +403,7 @@ onMounted(loadSummary);
             {{ row.current_price != null ? row.current_price.toFixed(4) : "-" }}
           </template>
         </ElTableColumn>
-        <ElTableColumn label="市值" width="100" align="right">
+        <ElTableColumn label="总资金" width="100" align="right">
           <template #default="{ row }">
             {{ marketValue(row) }}
           </template>
@@ -448,12 +449,12 @@ onMounted(loadSummary);
           <ElFormItem label="基金代码" required>
             <ElInput v-model="addForm.symbol" placeholder="如 000001、110011" />
           </ElFormItem>
-          <ElFormItem label="初始持有金额（元）" required>
+          <ElFormItem label="初始持有金额（元）">
             <ElInputNumber
               v-model="addForm.initial_amount"
               :min="0"
               :precision="2"
-              placeholder="当前持有市值"
+              placeholder="0 表示仅添加关注"
               style="width: 100%"
             />
           </ElFormItem>
@@ -467,7 +468,7 @@ onMounted(loadSummary);
             />
           </ElFormItem>
           <ElAlert type="info" :closable="false" show-icon style="margin-bottom: 12px">
-            基金名称、份额、净值将由系统自动获取并计算
+            基金名称、份额、净值将由系统自动获取；填 0 表示仅添加关注、暂不持仓
           </ElAlert>
         </template>
 
@@ -505,7 +506,7 @@ onMounted(loadSummary);
         <ol>
           <li><strong>查找基金代码</strong>：前往「数据终端」页面，输入基金名称或代码搜索，或从基金列表中查看代码（如 000001、110011）</li>
           <li><strong>填写基金代码</strong>：在添加窗口中输入 6 位基金代码</li>
-          <li><strong>初始持有金额</strong>：填写您当前持有的该基金的市值（元），即 份额 × 最新净值</li>
+          <li><strong>初始持有金额</strong>：填写您当前持有的该基金的市值（元），即 份额 × 最新净值；填 0 表示仅添加关注</li>
           <li><strong>初始亏损</strong>：如已有亏损，填写亏损金额（元）；无亏损填 0</li>
         </ol>
         <p>系统将自动获取基金名称与最新净值，并计算份额与成本价。</p>
