@@ -18,7 +18,8 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import close_database, get_database
 from app.utils.logger import logger
-from app.routers import assets, config_router, data, decisions, grok, mongo, news
+from app.routers import assets, config_router, data, decisions, grok, mongo
+from app.routers.news import router as news_router
 from app.schemas.response import api_success
 
 WATCHED_FUNDS_CONFIG_ID = "watched_funds"
@@ -174,7 +175,7 @@ app.include_router(decisions.router, prefix="/api/decisions", tags=["决策"])
 # 资产路由：/api/assets
 app.include_router(assets.router, prefix="/api/assets", tags=["资产"])
 app.include_router(mongo.router, prefix="/api/mongo", tags=["MongoDB"])
-app.include_router(news.router, prefix="/api/news", tags=["新闻"])
+app.include_router(news_router, prefix="/api/news", tags=["news"])
 app.include_router(grok.router, prefix="/api", tags=["Grok"])
 app.include_router(config_router.router, prefix="/api", tags=["配置"])
 

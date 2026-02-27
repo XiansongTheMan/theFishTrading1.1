@@ -86,3 +86,10 @@ export const batchGrok = (newsLinks: string[]) =>
     "/news/batch-grok",
     { news_links: newsLinks }
   );
+
+/** 一键生成 Grok 决策：POST /api/news/grok-decision */
+export const postNewsGrokDecision = (params: { fund_code?: string; include_news?: boolean }) =>
+  request.post<{ data: { prompt: string; news_summary?: { title: string; link: string; pub_date: string }[] } }>(
+    "/news/grok-decision",
+    { fund_code: params.fund_code ?? "", include_news: params.include_news ?? true }
+  );

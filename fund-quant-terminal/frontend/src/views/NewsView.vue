@@ -19,13 +19,14 @@ import {
   ElMessage,
   ElEmpty,
   ElTag,
+  ElPagination,
   ElDialog,
   ElSkeleton,
   ElCheckbox,
   ElTooltip,
 } from "element-plus";
 import { Search, RefreshRight, Star, StarFilled } from "@element-plus/icons-vue";
-import { getNewsList, getSentimentTrend, batchGrok } from "../api/news";
+import { getNewsList, getSentimentTrend, batchGrok, postNewsGrokDecision } from "../api/news";
 import type { NewsItem, SentimentTrendItem } from "../api/news";
 import { fetchGrokDecision } from "../api/grok";
 import { useChartResize } from "../composables/useChartResize";
@@ -159,6 +160,27 @@ const grokSourceFundCode = ref("");
 
 function onSelectionChange(rows: NewsItem[]) {
   selectedRows.value = rows;
+}
+
+async function openOneClickGrokDialog() {
+  grokDialogVisible.value = true;
+  grokPrompt.value = "";
+  grokNewsSummary.value = [];
+  grokSourceFundCode.value = fundCode.value.trim();
+  grokLoading.value = true;
+  try {
+    const res = (await postNewsGrokDecision({
+      fund_code: fundCode.value.trim() || undefined,
+      include_news: true,
+    })) as { data?: { prompt?: string; news_summary?: { title: string; link: string; pub_date: string }[] } };
+    grokPrompt.value = res?.data?.prompt ?? "";
+    grokNewsSummary.value = res?.data?.news_summary ?? [];
+  } catch {
+    grokPrompt.value = "";
+    grokNewsSummary.value = [];
+  } finally {
+    grokLoading.value = false;
+  }
 }
 
 async function openGrokDialog(mode: "fund" | "global" | "selected") {
@@ -335,6 +357,11 @@ function doQuery() {
   if (fundCode.value.trim()) loadSentimentTrend();
 }
 
+function onPageChange(p: number) {
+  page.value = p;
+  loadNews(p);
+}
+
 function toggleCardSelection(item: NewsItem, checked: boolean) {
   if (checked) {
     if (!selectedRows.value.some((r) => r.link === item.link)) {
@@ -414,8 +441,8 @@ onUnmounted(() => {
         <ElButton :icon="RefreshRight" :loading="loading" @click="loadWithRefresh">
           RSS 抓取
         </ElButton>
-        <ElButton type="success" :loading="grokLoading" @click="openGrokDialog(canGenerateBySelected() ? 'selected' : canGenerateByFund() ? 'fund' : 'global')">
-          生成 Grok 决策
+        <ElButton type="success" :loading="grokLoading" @click="openOneClickGrokDialog">
+          一键生成 Grok 决策
         </ElButton>
         <ElButton :type="viewMode === 'cards' ? 'primary' : undefined" size="small" @click="viewMode = 'cards'">卡片</ElButton>
         <ElButton :type="viewMode === 'table' ? 'primary' : undefined" size="small" @click="viewMode = 'table'">表格</ElButton>
@@ -549,7 +576,18 @@ onUnmounted(() => {
       </ElTable>
     </ElCard>
 
-    <!-- 加载更多 -->
+    <!-- 分页 -->
+    <div v-if="filteredList.length > 0" class="pagination-row">
+      <ElPagination
+        v-model:current-page="page"
+        :page-size="limit"
+        :total="total"
+        layout="total, prev, pager, next"
+        @current-change="onPageChange"
+      />
+    </div>
+
+    <!-- 加载更多（可选） -->
     <div v-if="hasMore && !loading && filteredList.length > 0" class="load-more-row">
       <ElButton :loading="loadMoreLoading" @click="loadMore">
         加载更多 ({{ filteredList.length }}/{{ total }})
@@ -584,7 +622,7 @@ onUnmounted(() => {
       <template #footer>
         <ElButton @click="grokDialogVisible = false">关闭</ElButton>
         <ElButton type="primary" :disabled="!grokPrompt" @click="copyGrokPrompt">
-          复制到剪贴板
+          复制
         </ElButton>
         <ElButton type="success" :disabled="!grokPrompt" @click="saveAsDecision">
           保存为决策
