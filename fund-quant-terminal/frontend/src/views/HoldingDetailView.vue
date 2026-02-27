@@ -6,7 +6,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElCard, ElButton, ElEmpty, ElRadioGroup, ElRadioButton, ElDialog, ElForm, ElFormItem, ElInputNumber, ElInput, ElMessage, ElMessageBox, ElTooltip } from "element-plus";
+import { ElCard, ElButton, ElEmpty, ElRadioGroup, ElRadioButton, ElDialog, ElForm, ElFormItem, ElInputNumber, ElInput, ElDatePicker, ElMessage, ElMessageBox, ElTooltip } from "element-plus";
 import * as echarts from "echarts";
 import { fetchData, getStockDaily } from "../api/data";
 import {
@@ -86,24 +86,32 @@ function filterByRange(data: { date: string; value: number }[], range: string): 
 
 const chartData = computed(() => filterByRange(rawData.value, dateRange.value));
 
-// 找出交易日期在 chartData 中的索引与对应 y 值，用于绘制买卖散点
+// 找出交易日期在 chartData 中的索引与对应 y 值，用于绘制买卖散点，并携带交易金额用于 tooltip
+interface TxPoint {
+  date: string;
+  pct: number;
+  amount: number;
+  quantity: number;
+  price: number;
+}
 function getBuySellPoints() {
   const data = chartData.value;
   const trans = transactions.value;
-  if (!data.length || !trans.length) return { buyPoints: [] as [string, number][], sellPoints: [] as [string, number][] };
+  if (!data.length || !trans.length) return { buyPoints: [] as TxPoint[], sellPoints: [] as TxPoint[] };
   const firstVal = data[0]?.value;
   if (firstVal == null || firstVal === 0) return { buyPoints: [], sellPoints: [] };
   const dateToIdx = new Map<string, number>();
   data.forEach((d, i) => dateToIdx.set(d.date, i));
-  const buyPoints: [string, number][] = [];
-  const sellPoints: [string, number][] = [];
+  const buyPoints: TxPoint[] = [];
+  const sellPoints: TxPoint[] = [];
   for (const t of trans) {
     const idx = dateToIdx.get(t.date);
     if (idx == null) continue;
     const val = data[idx]?.value;
     if (val == null) continue;
     const pct = ((val / firstVal) - 1) * 100;
-    const pt: [string, number] = [t.date, pct];
+    const amount = t.amount ?? t.quantity * t.price;
+    const pt: TxPoint = { date: t.date, pct, amount, quantity: t.quantity, price: t.price };
     if (t.type === "buy") buyPoints.push(pt);
     else sellPoints.push(pt);
   }
@@ -306,7 +314,7 @@ function renderChart() {
     series.push({
       name: "买入",
       type: "scatter",
-      data: buyPoints.map(([d, v]) => [d, v]),
+      data: buyPoints.map((d) => ({ value: [d.date, d.pct], amount: d.amount, quantity: d.quantity, price: d.price })),
       symbol: "circle",
       symbolSize: 14,
       symbolKeepAspect: false,
@@ -319,7 +327,7 @@ function renderChart() {
     series.push({
       name: "卖出",
       type: "scatter",
-      data: sellPoints.map(([d, v]) => [d, v]),
+      data: sellPoints.map((d) => ({ value: [d.date, d.pct], amount: d.amount, quantity: d.quantity, price: d.price })),
       symbol: "circle",
       symbolSize: 14,
       symbolKeepAspect: false,
@@ -337,7 +345,7 @@ function renderChart() {
     tooltip: {
       trigger: "axis",
       formatter: (params: unknown) => {
-        const pr = params as { name: string; dataIndex: number; value?: number | number[] }[];
+        const pr = params as { name: string; dataIndex: number; value?: number | number[]; seriesName: string; marker: string }[];
         if (!pr?.length) return "";
         const p = pr[0];
         const idx = data.findIndex((d) => d.date === p.name) ?? p.dataIndex ?? 0;
@@ -345,11 +353,31 @@ function renderChart() {
         const valLabel = isFund.value ? "净值" : "收盘价";
         let s = p.name + "<br/>";
         if (rawVal != null) s += `${valLabel}: ${Number(rawVal).toFixed(4)}<br/>`;
-        (pr as { marker: string; seriesName: string; value?: number | number[] }[]).forEach((item) => {
-          const val = item.value;
-          const v = Array.isArray(val) ? (val[1] as number) : Number(val);
-          if (typeof v === "number" && !Number.isNaN(v)) {
-            s += `${item.marker}${item.seriesName}: ${v >= 0 ? "+" : ""}${v.toFixed(2)}%<br/>`;
+        pr.forEach((item) => {
+          if (item.seriesName === "买入") {
+            const tx = buyPoints[item.dataIndex ?? 0];
+            if (tx) {
+              s += `${item.marker}买入: ¥${Number(tx.amount).toFixed(2)} (${Number(tx.quantity).toFixed(2)} 份 × ¥${Number(tx.price).toFixed(4)})<br/>`;
+            } else {
+              const val = item.value;
+              const v = Array.isArray(val) ? (val[1] as number) : Number(val);
+              if (typeof v === "number" && !Number.isNaN(v)) s += `${item.marker}买入: ${v >= 0 ? "+" : ""}${v.toFixed(2)}%<br/>`;
+            }
+          } else if (item.seriesName === "卖出") {
+            const tx = sellPoints[item.dataIndex ?? 0];
+            if (tx) {
+              s += `${item.marker}卖出: ¥${Number(tx.amount).toFixed(2)} (${Number(tx.quantity).toFixed(2)} 份 × ¥${Number(tx.price).toFixed(4)})<br/>`;
+            } else {
+              const val = item.value;
+              const v = Array.isArray(val) ? (val[1] as number) : Number(val);
+              if (typeof v === "number" && !Number.isNaN(v)) s += `${item.marker}卖出: ${v >= 0 ? "+" : ""}${v.toFixed(2)}%<br/>`;
+            }
+          } else {
+            const val = item.value;
+            const v = Array.isArray(val) ? (val[1] as number) : Number(val);
+            if (typeof v === "number" && !Number.isNaN(v)) {
+              s += `${item.marker}${item.seriesName}: ${v >= 0 ? "+" : ""}${v.toFixed(2)}%<br/>`;
+            }
           }
         });
         return s;
@@ -370,7 +398,8 @@ function renderChart() {
   chartInstance.off("click");
   chartInstance.on("click", (params: { componentType: string; name?: string; seriesName?: string; seriesType?: string; seriesIndex?: number; data?: unknown }) => {
     if (params.componentType !== "series") return;
-    const date = (params.name ?? (Array.isArray(params.data) ? params.data[0] : null)) as string | null;
+    const d = params.data as { value?: [string, number] } | undefined;
+    const date = (params.name ?? (Array.isArray(params.data) ? params.data[0] : d?.value?.[0])) as string | null;
     if (!date) return;
     const idx = data.findIndex((d) => d.date === date);
     const price = idx >= 0 ? data[idx].value : 0;
@@ -381,6 +410,12 @@ function renderChart() {
 
 function goBack() {
   router.push("/assets");
+}
+
+async function handleRefreshChart() {
+  await loadData();
+  await nextTick();
+  renderChart();
 }
 
 watch([chartRef, chartData, dateRange, transactions], () => {
@@ -444,9 +479,19 @@ onMounted(() => {
           </ElRadioGroup>
         </div>
       </template>
-      <div v-if="error" class="error-tip">
-        <ElEmpty :description="error" :image-size="80" />
-      </div>
+      <div class="chart-body">
+        <div class="chart-toolbar">
+          <ElButton
+            size="small"
+            :loading="loading"
+            @click="handleRefreshChart"
+          >
+            刷新
+          </ElButton>
+        </div>
+        <div v-if="error" class="error-tip">
+          <ElEmpty :description="error" :image-size="80" />
+        </div>
       <div
         v-else-if="chartData.length > 0"
         ref="chartRef"
@@ -460,6 +505,7 @@ onMounted(() => {
       </div>
       <div v-else-if="!loading" class="empty-tip">
         <ElEmpty description="暂无数据" :image-size="80" />
+      </div>
       </div>
     </ElCard>
 
@@ -516,7 +562,13 @@ onMounted(() => {
       </div>
       <ElForm :model="txForm" label-width="80px">
         <ElFormItem label="日期" required>
-          <ElInput v-model="txForm.date" placeholder="YYYY-MM-DD" />
+          <ElDatePicker
+            v-model="txForm.date"
+            type="date"
+            placeholder="选择日期"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
+          />
         </ElFormItem>
         <ElFormItem label="单价" required>
           <ElInputNumber v-model="txForm.price" :min="0.0001" :precision="4" style="width: 100%" />
@@ -588,6 +640,16 @@ onMounted(() => {
 
 .chart-card {
   margin-bottom: 20px;
+}
+
+.chart-body {
+  position: relative;
+}
+
+.chart-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .chart-header {
