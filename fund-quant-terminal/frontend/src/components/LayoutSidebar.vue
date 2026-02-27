@@ -33,7 +33,7 @@ const topMenuItems = [
   { path: "/decisions", name: "决策日志", icon: "Document" },
   { path: "/curve", name: "资产曲线", icon: "TrendCharts" },
   { path: "/assets", name: "资产", icon: "Wallet" },
-  { path: "/news", name: "市场资讯", icon: "News" },
+  { path: "/news", title: "市场资讯", name: "市场资讯", icon: "News" },
 ];
 
 const settingsSubItems = [

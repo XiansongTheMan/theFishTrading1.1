@@ -40,7 +40,7 @@ const routes: RouteRecordRaw[] = [
     path: "/news",
     name: "News",
     component: () => import("@/views/NewsView.vue"),
-    meta: { title: "市场资讯" },
+    meta: { title: "市场资讯", icon: "News" },
   },
   {
     path: "/holding/:assetType/:symbol",
