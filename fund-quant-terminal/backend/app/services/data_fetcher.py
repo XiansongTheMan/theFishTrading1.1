@@ -4,6 +4,7 @@
 # =====================================================
 
 import asyncio
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.config import settings
@@ -116,6 +117,65 @@ class DataFetcherService:
             return await asyncio.to_thread(_fetch)
         except Exception as e:
             logger.debug("get_stock_name 异常: %s", e)
+            return None
+
+    async def get_fund_sector(self, fund_code: str) -> Optional[str]:
+        """
+        获取基金所属板块（行业配置中占比最高的行业）
+        使用 akshare fund_portfolio_industry_allocation_em
+        """
+        def _fetch() -> Optional[str]:
+            try:
+                import akshare as ak
+                code = fund_code.strip().split(".")[0]
+                year = str(datetime.now().year)
+                df = ak.fund_portfolio_industry_allocation_em(symbol=code, date=year)
+                if df is None or df.empty:
+                    return None
+                col = "行业类别" if "行业类别" in df.columns else (df.columns[1] if len(df.columns) > 1 else None)
+                if col:
+                    return str(df[col].iloc[0]).strip() or None
+                return None
+            except Exception as e:
+                logger.debug("get_fund_sector 失败 %s: %s", fund_code, e)
+                return None
+
+        try:
+            return await asyncio.to_thread(_fetch)
+        except Exception as e:
+            logger.debug("get_fund_sector 异常: %s", e)
+            return None
+
+    async def get_stock_sector(self, symbol: str) -> Optional[str]:
+        """
+        获取股票所属行业
+        使用 akshare stock_individual_info_em
+        """
+        def _fetch() -> Optional[str]:
+            try:
+                import akshare as ak
+                code = symbol.strip().split(".")[0].zfill(6)
+                df = ak.stock_individual_info_em(symbol=code)
+                if df is None or df.empty:
+                    return None
+                cols = list(df.columns)
+                if len(cols) >= 2:
+                    key_col, val_col = cols[0], cols[1]
+                    for _, r in df.iterrows():
+                        k = str(r.get(key_col, "")).strip()
+                        if k in ("行业", "所属行业", "证监会行业"):
+                            v = r.get(val_col)
+                            if v and str(v).strip():
+                                return str(v).strip()
+                return None
+            except Exception as e:
+                logger.debug("get_stock_sector 失败 %s: %s", symbol, e)
+                return None
+
+        try:
+            return await asyncio.to_thread(_fetch)
+        except Exception as e:
+            logger.debug("get_stock_sector 异常: %s", e)
             return None
 
     async def get_fund_nav(self, fund_code: str) -> List[Dict[str, Any]]:

@@ -122,14 +122,15 @@ async function loadData() {
   const sym = symbol.value;
   if (!sym) {
     error.value = "缺少标的代码";
+    summary.value = null;
+    transactions.value = [];
     loading.value = false;
     return;
   }
   loading.value = true;
   error.value = "";
   rawData.value = [];
-  summary.value = null;
-  transactions.value = [];
+  // 保留 summary/transactions 直到获取新数据，避免刷新时页面闪烁
   try {
     let useCached = false;
     try {
@@ -169,14 +170,18 @@ async function loadData() {
       getHoldingSummary(assetType.value, sym),
       getHoldingTransactions(assetType.value, sym),
     ]);
-    summary.value = (summaryRes as { data?: HoldingSummary })?.data ?? null;
-    transactions.value = (txRes as { data?: HoldingTransaction[] })?.data ?? [];
+    const newSummary = (summaryRes as { data?: HoldingSummary })?.data ?? null;
+    const newTx = (txRes as { data?: HoldingTransaction[] })?.data ?? [];
+    summary.value = newSummary;
+    transactions.value = newTx;
     if (rawData.value.length === 0) {
       error.value = "暂无历史数据";
     }
   } catch (e) {
     error.value = "加载失败";
     console.error(e);
+    summary.value = null;
+    transactions.value = [];
   } finally {
     loading.value = false;
   }
@@ -412,7 +417,7 @@ function goBack() {
   router.push("/assets");
 }
 
-async function handleRefreshChart() {
+async function handleRefreshPage() {
   await loadData();
   await nextTick();
   renderChart();
@@ -438,7 +443,7 @@ onMounted(() => {
     <div class="header-row">
       <ElButton type="primary" link @click="goBack">← 返回资产</ElButton>
     </div>
-
+    <div class="holding-content" v-loading="loading">
     <!-- 投入资金、持有收益 -->
     <ElCard v-if="summary" shadow="never" class="summary-card">
       <div class="summary-grid">
@@ -448,14 +453,17 @@ onMounted(() => {
         </div>
         <div class="summary-item">
           <span class="label">持有收益</span>
-          <span class="value" :class="summary.profit >= 0 ? 'profit' : 'loss'">
-            {{ summary.profit >= 0 ? "+" : "" }}{{ summary.profit.toFixed(2) }}
-            ({{ summary.profit >= 0 ? "+" : "" }}{{ summary.profit_rate }}%)
+          <span class="value" :class="summary.profit != null && summary.profit >= 0 ? 'profit' : summary.profit != null ? 'loss' : ''">
+            <template v-if="summary.profit != null">
+              {{ summary.profit >= 0 ? "+" : "" }}{{ summary.profit.toFixed(2) }}
+              ({{ summary.profit >= 0 ? "+" : "" }}{{ summary.profit_rate ?? 0 }}%)
+            </template>
+            <template v-else>未获取</template>
           </span>
         </div>
         <div class="summary-item">
-          <span class="label">当前市值</span>
-          <span class="value">¥ {{ summary.market_value.toFixed(2) }}</span>
+          <span class="label">当前{{ isFund ? "基金" : "股票" }}所属板块</span>
+          <span class="value">{{ summary.sector ?? "未获取" }}</span>
         </div>
       </div>
       <div class="action-btns">
@@ -464,7 +472,7 @@ onMounted(() => {
       </div>
     </ElCard>
 
-    <ElCard shadow="never" class="chart-card" v-loading="loading">
+    <ElCard shadow="never" class="chart-card">
       <template #header>
         <div class="chart-header">
           <span>{{ symbol }} {{ isFund ? "基金" : "股票" }} - 业绩走势（点击折线节点可买入）</span>
@@ -484,7 +492,7 @@ onMounted(() => {
           <ElButton
             size="small"
             :loading="loading"
-            @click="handleRefreshChart"
+            @click="handleRefreshPage"
           >
             刷新
           </ElButton>
@@ -548,6 +556,7 @@ onMounted(() => {
         </div>
       </div>
     </ElCard>
+    </div>
 
     <!-- 买卖弹窗 -->
     <ElDialog
@@ -592,6 +601,11 @@ onMounted(() => {
 <style scoped>
 .holding-detail {
   max-width: 960px;
+}
+
+.holding-content {
+  position: relative;
+  min-height: 200px;
 }
 
 .header-row {

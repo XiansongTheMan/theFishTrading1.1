@@ -73,11 +73,13 @@ export interface HoldingSummary {
   name: string;
   quantity: number;
   cost_price: number;
-  current_price: number;
+  current_price: number | null;
   invested: number;
-  market_value: number;
-  profit: number;
-  profit_rate: number;
+  market_value: number | null;
+  profit: number | null;
+  profit_rate: number | null;
+  price_fetched?: boolean;
+  sector?: string | null;
 }
 
 export const getHoldingTransactions = (assetType: string, symbol: string) =>

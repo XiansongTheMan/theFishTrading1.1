@@ -299,6 +299,14 @@ function marketValue(row: Asset) {
   return (row.quantity * price).toFixed(2);
 }
 
+function currentProfit(row: Asset) {
+  const curr = row.current_price;
+  const cost = row.cost_price ?? 0;
+  if (curr == null || row.quantity == null) return "-";
+  const profit = (curr - cost) * row.quantity;
+  return profit >= 0 ? `+${profit.toFixed(2)}` : profit.toFixed(2);
+}
+
 function goToDetail(row: Asset) {
   const sym = row.symbol?.trim().split(".")[0];
   const type = row.asset_type === "stock" ? "stock" : "fund";
@@ -393,9 +401,9 @@ onMounted(loadSummary);
             {{ row.quantity != null ? Math.round(row.quantity) : "-" }}
           </template>
         </ElTableColumn>
-        <ElTableColumn prop="cost_price" label="成本价" width="100" align="right">
+        <ElTableColumn label="当前收益" width="100" align="right">
           <template #default="{ row }">
-            {{ row.cost_price != null ? row.cost_price.toFixed(4) : "-" }}
+            {{ currentProfit(row) }}
           </template>
         </ElTableColumn>
         <ElTableColumn prop="current_price" label="现价" width="100" align="right">

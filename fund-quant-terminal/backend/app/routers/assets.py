@@ -248,31 +248,46 @@ async def get_holding_summary(
         if asset:
             quantity = float(asset.get("quantity") or 0)
             cost_price = float(asset.get("cost_price") or 0)
-            current_price = float(asset.get("current_price") or cost_price or 0)
             name = asset.get("name") or sym
-        if quantity > 0:
-            try:
-                if at == "fund":
-                    nav_list = await data_service.get_fund_nav(sym)
-                    if nav_list:
-                        for r in reversed(nav_list):
-                            p = r.get("nav") or r.get("单位净值")
-                            if p is not None:
-                                current_price = float(p)
-                                break
-                else:
-                    daily_list = await data_service.get_stock_daily(symbol=sym)
-                    if daily_list:
-                        last_rec = daily_list[-1]
-                        p = last_rec.get("收盘") or last_rec.get("close")
+        else:
+            cost_price = 0.0
+        # 始终尝试从接口拉取最新行情价，失败时不使用缓存价，返回 None 供前端显示「未获取」
+        current_price: Optional[float] = None
+        price_fetched = False
+        try:
+            if at == "fund":
+                nav_list = await data_service.get_fund_nav(sym)
+                if nav_list:
+                    for r in reversed(nav_list):
+                        p = r.get("nav") or r.get("单位净值")
                         if p is not None:
                             current_price = float(p)
-            except Exception as e:
-                logger.debug("get_holding_summary 拉取实时价失败 %s %s: %s", sym, at, e)
+                            price_fetched = True
+                            break
+            else:
+                daily_list = await data_service.get_stock_daily(symbol=sym)
+                if daily_list:
+                    last_rec = daily_list[-1]
+                    p = last_rec.get("收盘") or last_rec.get("close")
+                    if p is not None:
+                        current_price = float(p)
+                        price_fetched = True
+        except Exception as e:
+            logger.debug("get_holding_summary 拉取实时价失败 %s %s: %s", sym, at, e)
+        sector: Optional[str] = None
+        try:
+            if at == "fund":
+                sector = await data_service.get_fund_sector(sym)
+            else:
+                sector = await data_service.get_stock_sector(sym)
+        except Exception as e:
+            logger.debug("get_holding_summary 拉取板块失败 %s %s: %s", sym, at, e)
         invested = round(quantity * cost_price, 2)
-        market_value = round(quantity * current_price, 2)
-        # 持有收益 = 市值 - 成本
-        profit = round(market_value - invested, 2)
+        market_value: Optional[float] = round(quantity * current_price, 2) if current_price is not None else None
+        profit: Optional[float] = round(market_value - invested, 2) if market_value is not None else None
+        profit_rate: Optional[float] = (
+            round((profit / invested * 100), 2) if (invested and profit is not None) else None
+        )
         return api_success(
             data={
                 "symbol": sym,
@@ -284,7 +299,9 @@ async def get_holding_summary(
                 "invested": invested,
                 "market_value": market_value,
                 "profit": profit,
-                "profit_rate": round((profit / invested * 100), 2) if invested else 0,
+                "profit_rate": profit_rate,
+                "price_fetched": price_fetched,
+                "sector": sector,
             }
         )
     except Exception as e:
