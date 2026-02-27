@@ -16,12 +16,20 @@ async def get_capital(db: AsyncIOMotorDatabase) -> float:
     return float(doc["capital"]) if doc and "capital" in doc else DEFAULT_CAPITAL
 
 
-async def set_capital(db: AsyncIOMotorDatabase, capital: float) -> None:
-    """设置当前现金"""
+async def set_capital(
+    db: AsyncIOMotorDatabase,
+    capital: float,
+    *,
+    session=None,
+) -> None:
+    """设置当前现金（支持事务 session）"""
     from datetime import datetime
 
+    kw = {"upsert": True}
+    if session is not None:
+        kw["session"] = session
     await db["account"].update_one(
         {"_id": ACCOUNT_DOC_ID},
         {"$set": {"capital": capital, "updated_at": datetime.utcnow()}},
-        upsert=True,
+        **kw,
     )

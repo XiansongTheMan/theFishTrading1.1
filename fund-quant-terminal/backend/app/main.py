@@ -1,19 +1,23 @@
 # =====================================================
 # FastAPI 主应用入口
-# 配置 CORS、路由、生命周期、日志
+# 配置 CORS、路由、生命周期（@asynccontextmanager）、全局异常处理、日志
 # =====================================================
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import close_database, get_database
+from app.utils.logger import logger
 from app.routers import assets, config_router, data, decisions, grok, mongo
 from app.schemas.response import api_success
-from app.utils.logger import logger
 
 
 def _get_grok_prompt_path() -> Path:
@@ -30,7 +34,7 @@ async def _sync_grok_prompt_to_file():
             logger.info("数据库中暂无 Grok 角色设定，跳过 GROK_ROLE_PROMPT.md 同步")
             return
         path = _get_grok_prompt_path()
-        path.write_text(doc["content"], encoding="utf-8")
+        await asyncio.to_thread(path.write_text, doc["content"], encoding="utf-8")
         logger.info("已从数据库同步 Grok 角色设定至 %s (v%s)", path, doc.get("version", "?"))
     except Exception as e:
         logger.warning("同步 GROK_ROLE_PROMPT.md 失败: %s", e)
@@ -38,14 +42,17 @@ async def _sync_grok_prompt_to_file():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理：连接、创建索引"""
-    try:
-        from app.database import ensure_indexes
+    """应用生命周期管理：startup 创建索引，shutdown 关闭 Motor 客户端"""
+    from app.database import ensure_indexes
 
+    # ----- Startup -----
+    try:
         db = await get_database()
         await db.command("ping")
         logger.info("MongoDB 连接成功, 数据库: %s", settings.MONGODB_DB_NAME)
+
         await ensure_indexes()
+        logger.info("Database indexes created successfully")
 
         doc = await db["config"].find_one({"_id": "tokens"})
         if doc and doc.get("tokens", {}).get("tushare"):
@@ -57,9 +64,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("MongoDB 连接失败: %s", e)
         raise
+
     yield
+
+    # ----- Shutdown -----
     await close_database()
-    logger.info("应用关闭，已断开数据库")
+    logger.info("Motor client closed")
 
 
 app = FastAPI(
@@ -71,11 +81,43 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+def _error_response(code: int, message: str, detail: Any = None) -> JSONResponse:
+    """统一错误响应格式: {code, message, detail}"""
+    body = {"code": code, "message": message}
+    if detail is not None:
+        body["detail"] = detail
+    return JSONResponse(status_code=code if 400 <= code < 600 else 500, content=body)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """Pydantic 校验错误 -> 422"""
+    errors = exc.errors()
+    return _error_response(422, "Request validation failed", errors)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    """HTTPException -> 统一 JSON 格式"""
+    detail = exc.detail
+    if isinstance(detail, dict):
+        return _error_response(exc.status_code, detail.get("message", str(detail)), detail.get("detail"))
+    return _error_response(exc.status_code, str(detail))
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+    """未捕获异常 -> 500"""
+    logger.exception("Unhandled exception: %s", exc)
+    return _error_response(500, "Internal server error", str(exc))
+
+
+# CORS 严格配置：origins 从 CORS_ORIGINS 环境变量加载，无通配符
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 

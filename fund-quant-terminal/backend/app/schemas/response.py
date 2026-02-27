@@ -23,6 +23,6 @@ def api_success(data: Any = None, message: str = "") -> dict:
     return {"code": 200, "data": data, "message": message}
 
 
-def api_error(code: int = 500, message: str = "服务器错误", data: Any = None) -> dict:
-    """构造错误响应"""
-    return {"code": code, "data": data, "message": message}
+def api_error(code: int = 500, message: str = "服务器错误", detail: Any = None) -> dict:
+    """构造错误响应（用于异常处理器；路由应使用 raise HTTPException）"""
+    return {"code": code, "message": message, "detail": detail}

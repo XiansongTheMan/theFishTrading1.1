@@ -1,6 +1,6 @@
 # =====================================================
 # fund-quant-terminal Docker Compose
-# MongoDB 数据库服务
+# MongoDB + Backend API，数据持久化到 ./data
 # 使用: docker compose up -d
 # =====================================================
 
@@ -11,10 +11,12 @@ services:
     image: mongo:7
     container_name: fund-quant-mongodb
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "27017:27017"
     volumes:
-      - mongodb_data:/data/db
+      - ./data:/data/db
     networks:
       - fund-quant-network
     healthcheck:
@@ -22,10 +24,31 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
-volumes:
-  mongodb_data:
-    driver: local
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fund-quant-backend
+    restart: always
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+    ports:
+      - "8000:8000"
+    networks:
+      - fund-quant-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 networks:
   fund-quant-network:

@@ -5,9 +5,9 @@
 
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas.response import api_error, api_success
+from app.schemas.response import api_success
 from app.schemas.data_schemas import DataFetchRequest
 from app.services.data_fetcher import DataFetcherService
 from app.utils.logger import logger
@@ -31,7 +31,7 @@ async def data_fetch(req: DataFetchRequest) -> dict:
 
         if data_type == "nav":
             if not fund_code:
-                return api_error(code=400, message="data_type=nav 时需提供 fund_code")
+                raise HTTPException(status_code=400, detail="data_type=nav 时需提供 fund_code")
             data = await data_service.get_fund_nav(fund_code)
             return api_success(data={"fund_code": fund_code, "data_type": "nav", "data": data, "total": len(data)})
         elif data_type == "list":
@@ -42,10 +42,12 @@ async def data_fetch(req: DataFetchRequest) -> dict:
             data = await data_service.get_tushare_fund_info(fc)
             return api_success(data={"fund_code": fund_code, "data_type": "info", "data": data, "total": len(data)})
         else:
-            return api_error(code=400, message=f"不支持的 data_type: {data_type}")
+            raise HTTPException(status_code=400, detail=f"不支持的 data_type: {data_type}")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("data_fetch 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history")
@@ -63,9 +65,11 @@ async def data_history(
             fund_code=fund_code, start_date=start_date, end_date=end_date, limit=limit
         )
         return api_success(data={"fund_code": fund_code, "data": data, "total": len(data)})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("data_history 异常 fund_code=%s: %s", fund_code, e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------- 原有接口（统一响应格式） ----------
@@ -79,7 +83,7 @@ async def get_fund_info(fund_code: str) -> dict:
     try:
         fund_code = (fund_code or "").strip()
         if not fund_code:
-            return api_error(code=400, message="基金代码不能为空")
+            raise HTTPException(status_code=400, detail="基金代码不能为空")
         nav_data = await data_service.get_fund_nav(fund_code)
         fund_list = await data_service.get_fund_list(limit=5000)
         nav = None
@@ -102,9 +106,11 @@ async def get_fund_info(fund_code: str) -> dict:
         if not name:
             name = await data_service.get_fund_name(fund_code)
         return api_success(data={"fund_code": fund_code, "name": name or f"基金{fund_code}", "nav": nav})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_fund_info 异常 fund_code=%s: %s", fund_code, e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/stock/{symbol}")
@@ -115,7 +121,7 @@ async def get_stock_info(symbol: str) -> dict:
     try:
         symbol = (symbol or "").strip().split(".")[0]
         if not symbol:
-            return api_error(code=400, message="股票代码不能为空")
+            raise HTTPException(status_code=400, detail="股票代码不能为空")
         name = await data_service.get_stock_name(symbol)
         # 可选：获取最新价
         daily = await data_service.get_stock_daily(symbol=symbol, start=None, end=None)
@@ -132,9 +138,11 @@ async def get_stock_info(symbol: str) -> dict:
                 "latest_price": latest_price,
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_stock_info 异常 symbol=%s: %s", symbol, e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/funds")
@@ -143,9 +151,11 @@ async def get_fund_list(limit: int = Query(100, ge=1, le=500)) -> dict:
     try:
         data = await data_service.get_fund_list(limit=limit)
         return api_success(data={"data": data, "total": len(data)})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_fund_list 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/stock/{symbol}/daily")
@@ -158,9 +168,11 @@ async def get_stock_daily(
     try:
         data = await data_service.get_stock_daily(symbol=symbol, start=start, end=end)
         return api_success(data={"data": data, "symbol": symbol})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_stock_daily 异常 symbol=%s: %s", symbol, e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/index/{symbol}/daily")
@@ -173,6 +185,8 @@ async def get_index_daily(
     try:
         data = await data_service.get_index_daily(symbol=symbol, start=start, end=end)
         return api_success(data={"data": data, "symbol": symbol})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_index_daily 异常 symbol=%s: %s", symbol, e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

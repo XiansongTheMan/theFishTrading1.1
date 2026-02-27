@@ -3,15 +3,16 @@
 # 存储于 MongoDB config 集合
 # =====================================================
 
+import asyncio
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
 from app.database import get_database
 from app.routers.data import data_service
-from app.schemas.response import api_error, api_success
+from app.schemas.response import api_success
 from app.utils.logger import logger
 
 router = APIRouter()
@@ -75,9 +76,11 @@ async def get_tokens(db: AsyncIOMotorDatabase = Depends(get_database)):
                 }
             )
         return api_success(data={"items": result})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_tokens error: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/config/tokens")
@@ -113,9 +116,11 @@ async def update_tokens(
             logger.info("Tushare token 已应用")
 
         return api_success(message="Token 已保存并应用")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("update_tokens error: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _test_tushare_token(token: str) -> tuple[bool, str]:
@@ -144,7 +149,7 @@ async def test_token(
     try:
         key = (body.key or "").strip()
         if key not in TOKEN_ITEMS:
-            return api_error(code=400, message=f"不支持的 token 类型: {key}")
+            raise HTTPException(status_code=400, detail=f"不支持的 token 类型: {key}")
 
         # 优先使用传入的 value，否则从数据库读取
         token_val = body.value
@@ -158,7 +163,7 @@ async def test_token(
             return api_success(data={"ok": False, "message": "请先配置 Token"})
 
         if key == "tushare":
-            ok, msg = _test_tushare_token(token_val)
+            ok, msg = await asyncio.to_thread(_test_tushare_token, token_val)
             if ok:
                 return api_success(data={"ok": True})
             return api_success(data={"ok": False, "message": msg or "连接失败"})
@@ -167,6 +172,8 @@ async def test_token(
             return api_success(data={"ok": False, "message": "该接口尚未对接，无法测试"})
 
         return api_success(data={"ok": False, "message": "暂不支持该 Token 的连接测试"})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("test_token error: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

@@ -6,12 +6,12 @@
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
 from app.database import get_database
-from app.schemas.response import api_error, api_success
+from app.schemas.response import api_success
 from app.utils.logger import logger
 
 router = APIRouter()
@@ -45,9 +45,11 @@ async def get_grok_prompt(
             "updated_at": ut.isoformat() if ut and hasattr(ut, "isoformat") else "",
         }
         return api_success(data=data)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_grok_prompt error: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/grok-prompt")
@@ -76,9 +78,11 @@ async def save_grok_prompt(
             },
             message=f"已保存为新版本 v{next_version}",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("save_grok_prompt error: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/grok-prompt/history")
@@ -100,6 +104,8 @@ async def get_grok_prompt_history(
                 d["updated_at"] = doc["updated_at"].isoformat() if hasattr(doc["updated_at"], "isoformat") else str(doc["updated_at"])
             items.append(d)
         return api_success(data=items)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_grok_prompt_history error: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

@@ -15,7 +15,7 @@ export function startGlobalRefresh() {
 
   async function doRefresh() {
     try {
-      const res = (await getAssetsSummary()) as unknown as {
+      const res = (await getAssetsSummary({ skipLoading: true })) as unknown as {
         data?: { capital?: number; holdings?: unknown[] };
       };
       const d = res?.data;
@@ -36,8 +36,8 @@ export function startGlobalRefresh() {
           );
         }
       }
-    } catch {
-      // 静默失败，下次重试
+    } catch (e) {
+      console.warn("[refresh] 60s 自动刷新失败，下次重试:", e);
     }
   }
 
@@ -54,7 +54,7 @@ export function stopGlobalRefresh() {
 
 export async function checkConnection(): Promise<boolean> {
   try {
-    await request.get("/assets/summary");
+    await request.get("/assets/summary", { skipLoading: true });
     return true;
   } catch {
     return false;

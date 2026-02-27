@@ -1,14 +1,72 @@
 # =====================================================
 # 数据获取服务
 # AKShare / Tushare 集成，异步执行阻塞调用
+# tenacity 重试、超时、耗时日志、异常兜底
 # =====================================================
 
 import asyncio
+import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from functools import wraps
+from typing import Any, Callable, Dict, List, Optional, TypeVar
+
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
 from app.utils.logger import logger
+
+T = TypeVar("T")
+AKSHARE_TIMEOUT = 30
+AKSHARE_RATE_LIMIT_SEC = 0.5
+_last_akshare_call = 0.0
+
+
+def _rate_limit_sync() -> None:
+    """同步环境下的限流：距上次调用不足 AKSHARE_RATE_LIMIT_SEC 时 sleep"""
+    global _last_akshare_call
+    import time as _t
+
+    now = _t.monotonic()
+    elapsed = now - _last_akshare_call
+    if elapsed < AKSHARE_RATE_LIMIT_SEC and _last_akshare_call > 0:
+        _t.sleep(AKSHARE_RATE_LIMIT_SEC - elapsed)
+    _last_akshare_call = _t.monotonic()
+
+
+def akshare_retry(func: Callable[..., T]) -> Callable[..., T]:
+    """AKShare 调用装饰器：重试 3 次、指数退避、限流、捕获异常"""
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(min=1, max=10),
+        retry=retry_if_exception_type(Exception),
+        reraise=True,
+    )
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> T:
+        _rate_limit_sync()
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+async def _run_akshare(
+    fn: Callable[[], T],
+    op_name: str,
+) -> T:
+    """执行 AKShare 同步函数：超时、耗时日志、异常兜底"""
+    start = time.monotonic()
+    try:
+        result = await asyncio.wait_for(asyncio.to_thread(fn), timeout=AKSHARE_TIMEOUT)
+        duration = time.monotonic() - start
+        logger.info("[%s] request completed in %.2fs", op_name, duration)
+        return result
+    except asyncio.TimeoutError:
+        logger.warning("[%s] timeout after %.1fs", op_name, time.monotonic() - start)
+        raise
+    except Exception as e:
+        logger.exception("[%s] failed after %.2fs: %s", op_name, time.monotonic() - start, e)
+        raise
 
 
 class DataFetcherService:
@@ -44,35 +102,31 @@ class DataFetcherService:
         根据基金代码获取真实基金名称
         优先 fund_individual_basic_info_xq，失败时从 fund_list 查找
         """
+        @akshare_retry
         def _fetch() -> Optional[str]:
-            try:
-                import akshare as ak
-                df = ak.fund_individual_basic_info_xq(symbol=fund_code.strip())
-                if df is not None and not df.empty:
-                    # 可能是 key-value 格式（item/value）或 基金名称 列
-                    cols = list(df.columns)
-                    if len(cols) >= 2:
-                        # key-value 形式：找 基金名称/基金简称 对应的值
-                        key_col = cols[0] if "item" in str(cols[0]).lower() or "名称" in str(cols[0]) else cols[0]
-                        val_col = cols[1]
-                        for _, r in df.iterrows():
-                            k = str(r.get(key_col, "")).strip()
-                            if k in ("基金名称", "基金简称", "name"):
-                                v = r.get(val_col)
-                                if v and str(v).strip():
-                                    return str(v).strip()
-                    for col in ["基金名称", "name", "基金简称"]:
-                        if col in df.columns:
-                            val = df[col].iloc[0]
-                            if val and str(val).strip():
-                                return str(val).strip()
-                return None
-            except Exception as e:
-                logger.debug("get_fund_name fund_individual_basic_info_xq 失败 %s: %s", fund_code, e)
-                return None
+            import akshare as ak
+
+            df = ak.fund_individual_basic_info_xq(symbol=fund_code.strip())
+            if df is not None and not df.empty:
+                cols = list(df.columns)
+                if len(cols) >= 2:
+                    key_col = cols[0] if "item" in str(cols[0]).lower() or "名称" in str(cols[0]) else cols[0]
+                    val_col = cols[1]
+                    for _, r in df.iterrows():
+                        k = str(r.get(key_col, "")).strip()
+                        if k in ("基金名称", "基金简称", "name"):
+                            v = r.get(val_col)
+                            if v and str(v).strip():
+                                return str(v).strip()
+                for col in ["基金名称", "name", "基金简称"]:
+                    if col in df.columns:
+                        val = df[col].iloc[0]
+                        if val and str(val).strip():
+                            return str(val).strip()
+            return None
 
         try:
-            name = await asyncio.to_thread(_fetch)
+            name = await _run_akshare(_fetch, "get_fund_name")
             if name:
                 return name
         except Exception as e:
@@ -95,26 +149,24 @@ class DataFetcherService:
         根据股票代码获取真实股票名称
         使用 akshare stock_info_a_code_name
         """
+        @akshare_retry
         def _fetch() -> Optional[str]:
-            try:
-                import akshare as ak
-                df = ak.stock_info_a_code_name()
-                if df is None or df.empty:
-                    return None
-                code_col = "code" if "code" in df.columns else "代码"
-                name_col = "name" if "name" in df.columns else "名称"
-                sym = symbol.strip().split(".")[0].zfill(6)
-                for _, r in df.iterrows():
-                    c = str(r.get(code_col, "")).zfill(6)
-                    if c == sym:
-                        return str(r.get(name_col, "")).strip() or None
+            import akshare as ak
+
+            df = ak.stock_info_a_code_name()
+            if df is None or df.empty:
                 return None
-            except Exception as e:
-                logger.debug("get_stock_name 失败 symbol=%s: %s", symbol, e)
-                return None
+            code_col = "code" if "code" in df.columns else "代码"
+            name_col = "name" if "name" in df.columns else "名称"
+            sym = symbol.strip().split(".")[0].zfill(6)
+            for _, r in df.iterrows():
+                c = str(r.get(code_col, "")).zfill(6)
+                if c == sym:
+                    return str(r.get(name_col, "")).strip() or None
+            return None
 
         try:
-            return await asyncio.to_thread(_fetch)
+            return await _run_akshare(_fetch, "get_stock_name")
         except Exception as e:
             logger.debug("get_stock_name 异常: %s", e)
             return None
@@ -124,24 +176,22 @@ class DataFetcherService:
         获取基金所属板块（行业配置中占比最高的行业）
         使用 akshare fund_portfolio_industry_allocation_em
         """
+        @akshare_retry
         def _fetch() -> Optional[str]:
-            try:
-                import akshare as ak
-                code = fund_code.strip().split(".")[0]
-                year = str(datetime.now().year)
-                df = ak.fund_portfolio_industry_allocation_em(symbol=code, date=year)
-                if df is None or df.empty:
-                    return None
-                col = "行业类别" if "行业类别" in df.columns else (df.columns[1] if len(df.columns) > 1 else None)
-                if col:
-                    return str(df[col].iloc[0]).strip() or None
+            import akshare as ak
+
+            code = fund_code.strip().split(".")[0]
+            year = str(datetime.now().year)
+            df = ak.fund_portfolio_industry_allocation_em(symbol=code, date=year)
+            if df is None or df.empty:
                 return None
-            except Exception as e:
-                logger.debug("get_fund_sector 失败 %s: %s", fund_code, e)
-                return None
+            col = "行业类别" if "行业类别" in df.columns else (df.columns[1] if len(df.columns) > 1 else None)
+            if col:
+                return str(df[col].iloc[0]).strip() or None
+            return None
 
         try:
-            return await asyncio.to_thread(_fetch)
+            return await _run_akshare(_fetch, "get_fund_sector")
         except Exception as e:
             logger.debug("get_fund_sector 异常: %s", e)
             return None
@@ -151,29 +201,27 @@ class DataFetcherService:
         获取股票所属行业
         使用 akshare stock_individual_info_em
         """
+        @akshare_retry
         def _fetch() -> Optional[str]:
-            try:
-                import akshare as ak
-                code = symbol.strip().split(".")[0].zfill(6)
-                df = ak.stock_individual_info_em(symbol=code)
-                if df is None or df.empty:
-                    return None
-                cols = list(df.columns)
-                if len(cols) >= 2:
-                    key_col, val_col = cols[0], cols[1]
-                    for _, r in df.iterrows():
-                        k = str(r.get(key_col, "")).strip()
-                        if k in ("行业", "所属行业", "证监会行业"):
-                            v = r.get(val_col)
-                            if v and str(v).strip():
-                                return str(v).strip()
+            import akshare as ak
+
+            code = symbol.strip().split(".")[0].zfill(6)
+            df = ak.stock_individual_info_em(symbol=code)
+            if df is None or df.empty:
                 return None
-            except Exception as e:
-                logger.debug("get_stock_sector 失败 %s: %s", symbol, e)
-                return None
+            cols = list(df.columns)
+            if len(cols) >= 2:
+                key_col, val_col = cols[0], cols[1]
+                for _, r in df.iterrows():
+                    k = str(r.get(key_col, "")).strip()
+                    if k in ("行业", "所属行业", "证监会行业"):
+                        v = r.get(val_col)
+                        if v and str(v).strip():
+                            return str(v).strip()
+            return None
 
         try:
-            return await asyncio.to_thread(_fetch)
+            return await _run_akshare(_fetch, "get_stock_sector")
         except Exception as e:
             logger.debug("get_stock_sector 异常: %s", e)
             return None
@@ -183,25 +231,22 @@ class DataFetcherService:
         获取基金净值走势
         使用 akshare fund_open_fund_info_em(indicator="单位净值走势")
         """
+        @akshare_retry
         def _fetch() -> List[Dict[str, Any]]:
-            try:
-                import akshare as ak
-                code = fund_code.strip().split(".")[0]
-                df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-                if df is None or df.empty:
-                    return []
-                # 统一列名: 净值日期->date, 单位净值->nav, 日增长率->daily_return
-                col_map = {"净值日期": "date", "单位净值": "nav", "日增长率": "daily_return"}
-                for old, new in col_map.items():
-                    if old in df.columns:
-                        df = df.rename(columns={old: new})
-                return df.to_dict(orient="records")
-            except Exception as e:
-                logger.exception("get_fund_nav akshare 异常 fund_code=%s: %s", fund_code, e)
-                raise
+            import akshare as ak
+
+            code = fund_code.strip().split(".")[0]
+            df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+            if df is None or df.empty:
+                return []
+            col_map = {"净值日期": "date", "单位净值": "nav", "日增长率": "daily_return"}
+            for old, new in col_map.items():
+                if old in df.columns:
+                    df = df.rename(columns={old: new})
+            return df.to_dict(orient="records")
 
         try:
-            return await asyncio.to_thread(_fetch)
+            return await _run_akshare(_fetch, "get_fund_nav")
         except Exception as e:
             logger.error("get_fund_nav 执行失败 fund_code=%s: %s", fund_code, e)
             raise
@@ -211,8 +256,10 @@ class DataFetcherService:
         获取基金列表
         优先 akshare fund_name_em，失败时尝试 tushare fund_basic
         """
+        @akshare_retry
         def _akshare_fetch() -> List[Dict[str, Any]]:
             import akshare as ak
+
             df = ak.fund_name_em()
             if df is None or df.empty:
                 return []
@@ -230,7 +277,7 @@ class DataFetcherService:
             return df.to_dict(orient="records")
 
         try:
-            result = await asyncio.to_thread(_akshare_fetch)
+            result = await _run_akshare(_akshare_fetch, "get_fund_list")
             if result:
                 return result
         except Exception as e:
@@ -307,9 +354,12 @@ class DataFetcherService:
         self, symbol: str, start: Optional[str] = None, end: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """获取股票日线数据"""
+        code = symbol.split(".")[0] if "." in symbol else symbol
+
+        @akshare_retry
         def _fetch() -> List[Dict[str, Any]]:
             import akshare as ak
-            code = symbol.split(".")[0] if "." in symbol else symbol
+
             df = ak.stock_zh_a_hist(symbol=code, period="daily")
             if df is None or df.empty:
                 return []
@@ -320,7 +370,7 @@ class DataFetcherService:
             return df.to_dict(orient="records")
 
         try:
-            return await asyncio.to_thread(_fetch)
+            return await _run_akshare(_fetch, "get_stock_daily")
         except Exception as e:
             logger.warning("get_stock_daily 失败 symbol=%s: %s", symbol, e)
             return []
@@ -329,9 +379,12 @@ class DataFetcherService:
         self, symbol: str = "000001", start: Optional[str] = None, end: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """获取指数日线数据"""
+        sym = f"sh{symbol}" if symbol.startswith("0") else symbol
+
+        @akshare_retry
         def _fetch() -> List[Dict[str, Any]]:
             import akshare as ak
-            sym = f"sh{symbol}" if symbol.startswith("0") else symbol
+
             df = ak.stock_zh_index_daily(symbol=sym)
             if df is None or df.empty:
                 return []
@@ -342,7 +395,7 @@ class DataFetcherService:
             return df.to_dict(orient="records")
 
         try:
-            return await asyncio.to_thread(_fetch)
+            return await _run_akshare(_fetch, "get_index_daily")
         except Exception as e:
             logger.warning("get_index_daily 失败 symbol=%s: %s", symbol, e)
             return []

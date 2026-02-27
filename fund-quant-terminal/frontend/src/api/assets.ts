@@ -31,8 +31,8 @@ export const getAssets = (params?: {
   asset_type?: string;
 }) => request.get<{ data: Asset[] }>("/assets", { params });
 
-export const getAssetsSummary = () =>
-  request.get<{ data: AssetsSummary }>("/assets/summary");
+export const getAssetsSummary = (config?: { skipLoading?: boolean }) =>
+  request.get<{ data: AssetsSummary }>("/assets/summary", { skipLoading: config?.skipLoading });
 
 export const updateAssets = (data: {
   capital?: number;

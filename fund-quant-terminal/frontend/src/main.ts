@@ -30,6 +30,10 @@ app.config.errorHandler = (err: unknown) => {
 
 window.addEventListener("unhandledrejection", (e) => {
   const err = e.reason;
+  if (err && typeof err === "object" && (err as { _toastShown?: boolean })._toastShown) {
+    e.preventDefault();
+    return;
+  }
   const msg =
     err instanceof Error
       ? err.message
@@ -37,7 +41,7 @@ window.addEventListener("unhandledrejection", (e) => {
         ? String((err as { message: unknown }).message)
         : String(err ?? "请求失败");
   showError(msg || "发生未知错误");
-  e.preventDefault(); // 避免控制台重复报错
+  e.preventDefault();
 });
 app.use(createPinia());
 app.use(router);

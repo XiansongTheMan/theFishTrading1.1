@@ -73,8 +73,8 @@ async function refreshSummary() {
         (d.holdings ?? []) as { symbol: string; name: string; quantity: number; cost_price?: number; current_price?: number; asset_type: string; id?: string }[]
       );
     }
-  } catch {
-    // ignore
+  } catch (e) {
+    console.warn("[DecisionLog] refreshSummary 失败:", e);
   }
 }
 

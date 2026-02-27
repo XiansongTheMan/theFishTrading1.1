@@ -6,16 +6,16 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
-from pymongo import ReturnDocument
 
 from app.database import get_database
 from app.models.asset import AssetCreate
 from app.schemas.assets_schemas import AssetsUpdateRequest, HoldingTransactionCreate
-from app.schemas.response import api_error, api_success
+from app.schemas.response import api_success
 from app.services.account_service import get_capital, set_capital
+from app.services.assets import update_assets as update_assets_service
 from app.services.data_fetcher import DataFetcherService
 from app.utils.logger import logger
 
@@ -54,9 +54,11 @@ async def list_assets(
         docs = await cursor.to_list(length=limit)
         data = [_serialize_doc(d) for d in docs]
         return api_success(data=data)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("list_assets 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _store_holding_history(
@@ -114,9 +116,11 @@ async def create_asset(
                 logger.warning("create_asset 拉取历史失败 %s: %s", sym, e)
 
         return api_success(data=_serialize_doc(doc))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("create_asset 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/sync")
@@ -170,9 +174,11 @@ async def assets_sync(db: AsyncIOMotorDatabase = Depends(get_database)) -> dict:
             data={"updated": updated, "failed": failed, "total": len(docs)},
             message=f"同步完成：成功 {updated}，失败 {failed}",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("assets_sync 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history/{asset_type}/{symbol}")
@@ -186,7 +192,7 @@ async def get_holding_history(
         sym = (symbol or "").strip().split(".")[0]
         at = (asset_type or "fund").lower()
         if not sym:
-            return api_error(code=400, message="标的代码不能为空")
+            raise HTTPException(status_code=400, detail="标的代码不能为空")
         doc = await db[HISTORY_COLLECTION].find_one(
             {"symbol": sym, "asset_type": at}
         )
@@ -200,9 +206,11 @@ async def get_holding_history(
                 "updated_at": doc.get("updated_at").isoformat() if doc.get("updated_at") else None,
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_holding_history 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history/{asset_type}/{symbol}/transactions")
@@ -216,16 +224,18 @@ async def get_holding_transactions(
         sym = (symbol or "").strip().split(".")[0]
         at = (asset_type or "fund").lower()
         if not sym:
-            return api_error(code=400, message="标的代码不能为空")
+            raise HTTPException(status_code=400, detail="标的代码不能为空")
         cursor = db[TRANSACTION_COLLECTION].find(
             {"symbol": sym, "asset_type": at}
         ).sort("date", -1)
         docs = await cursor.to_list(length=500)
         data = [_serialize_doc(d) for d in docs]
         return api_success(data=data)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_holding_transactions 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history/{asset_type}/{symbol}/summary")
@@ -239,7 +249,7 @@ async def get_holding_summary(
         sym = (symbol or "").strip().split(".")[0]
         at = (asset_type or "fund").lower()
         if not sym:
-            return api_error(code=400, message="标的代码不能为空")
+            raise HTTPException(status_code=400, detail="标的代码不能为空")
         asset = await db[COLLECTION].find_one({"symbol": sym, "asset_type": at})
         quantity = 0.0
         cost_price = 0.0
@@ -304,9 +314,11 @@ async def get_holding_summary(
                 "sector": sector,
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_holding_summary 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/transactions")
@@ -319,25 +331,25 @@ async def create_transaction(
         sym = (item.symbol or "").strip().split(".")[0]
         at = (item.asset_type or "fund").lower()
         if not sym:
-            return api_error(code=400, message="标的代码不能为空")
+            raise HTTPException(status_code=400, detail="标的代码不能为空")
         if item.type not in ("buy", "sell"):
-            return api_error(code=400, message="type 必须为 buy 或 sell")
+            raise HTTPException(status_code=400, detail="type 必须为 buy 或 sell")
         if item.quantity <= 0 or item.price <= 0:
-            return api_error(code=400, message="数量和单价必须大于 0")
+            raise HTTPException(status_code=400, detail="数量和单价必须大于 0")
         amount = item.amount if item.amount is not None else round(item.quantity * item.price, 2)
         if amount <= 0:
-            return api_error(code=400, message="金额必须大于 0")
+            raise HTTPException(status_code=400, detail="金额必须大于 0")
         if not item.date or len(item.date.strip()) < 8:
-            return api_error(code=400, message="请填写有效交易日期")
+            raise HTTPException(status_code=400, detail="请填写有效交易日期")
 
         coll = db[COLLECTION]
         asset = await coll.find_one({"symbol": sym, "asset_type": at})
         if item.type == "sell":
             if not asset:
-                return api_error(code=400, message="无此持仓，无法卖出")
+                raise HTTPException(status_code=400, detail="无此持仓，无法卖出")
             old_qty = float(asset.get("quantity") or 0)
             if item.quantity > old_qty:
-                return api_error(code=400, message=f"卖出数量不能超过持仓 {old_qty}")
+                raise HTTPException(status_code=400, detail=f"卖出数量不能超过持仓 {old_qty}")
 
         tx_doc = {
             "symbol": sym,
@@ -383,9 +395,11 @@ async def create_transaction(
             )
 
         return api_success(data=_serialize_doc(tx_doc), message="交易记录已添加")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("create_transaction 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/history/{asset_type}/{symbol}/transactions/{transaction_id}")
@@ -402,9 +416,9 @@ async def delete_transaction(
         try:
             tx_doc = await coll_tx.find_one({"_id": ObjectId(transaction_id)})
         except Exception:
-            return api_error(code=400, message="交易ID无效")
+            raise HTTPException(status_code=400, detail="交易ID无效")
         if not tx_doc:
-            return api_error(code=404, message="交易记录不存在")
+            raise HTTPException(status_code=404, detail="交易记录不存在")
         sym = (tx_doc.get("symbol") or "").strip()
         at = (tx_doc.get("asset_type") or "fund").lower()
         tx_type = tx_doc.get("type")
@@ -417,14 +431,14 @@ async def delete_transaction(
                 new_cost = float(asset.get("cost_price") or 0)
                 old_qty = new_qty - qty
                 if old_qty < 0:
-                    return api_error(code=400, message="无法删除：会导致持仓数量为负")
+                    raise HTTPException(status_code=400, detail="无法删除：会导致持仓数量为负")
                 cost_price = float(asset.get("cost_price") or 0) if old_qty <= 0 else (new_qty * new_cost - qty * price) / old_qty
                 await coll_asset.update_one(
                     {"_id": asset["_id"]},
                     {"$set": {"quantity": max(0, old_qty), "cost_price": cost_price, "updated_at": datetime.utcnow()}},
                 )
             else:
-                return api_error(code=400, message="无对应持仓，无法反向删除买入")
+                raise HTTPException(status_code=400, detail="无对应持仓，无法反向删除买入")
         else:
             if asset:
                 old_qty = float(asset.get("quantity") or 0)
@@ -446,9 +460,11 @@ async def delete_transaction(
                 })
         await coll_tx.delete_one({"_id": ObjectId(transaction_id)})
         return api_success(data=None, message="交易已删除")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("delete_transaction 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/history/{asset_type}/{symbol}/transactions/clear")
@@ -462,7 +478,7 @@ async def clear_holding_transactions(
         sym = (symbol or "").strip().split(".")[0]
         at = (asset_type or "fund").lower()
         if not sym:
-            return api_error(code=400, message="标的代码不能为空")
+            raise HTTPException(status_code=400, detail="标的代码不能为空")
         coll_tx = db[TRANSACTION_COLLECTION]
         coll_asset = db[COLLECTION]
         result = await coll_tx.delete_many({"symbol": sym, "asset_type": at})
@@ -475,9 +491,11 @@ async def clear_holding_transactions(
             data={"deleted": result.deleted_count},
             message=f"已清空 {result.deleted_count} 条历史操作",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("clear_holding_transactions 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/summary")
@@ -504,9 +522,11 @@ async def assets_summary(db: AsyncIOMotorDatabase = Depends(get_database)) -> di
                 "total_value": round(total_value, 2),
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("assets_summary 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/update")
@@ -514,30 +534,27 @@ async def assets_update(
     body: AssetsUpdateRequest,
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict:
-    """交易执行后更新：资本、持仓"""
+    """交易执行后更新：资本、持仓。所有写操作在同一事务中原子提交"""
     try:
-        if body.capital is not None:
-            await set_capital(db, body.capital)
-        if body.assets is not None:
-            coll = db[COLLECTION]
-            await coll.delete_many({})
-            for a in body.assets:
-                doc = {
-                    "symbol": a.get("symbol", ""),
-                    "name": a.get("name", ""),
-                    "quantity": float(a.get("quantity", 0)),
-                    "cost_price": a.get("cost_price"),
-                    "current_price": a.get("current_price"),
-                    "asset_type": a.get("asset_type", "fund"),
-                    "created_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow(),
-                }
-                if doc["symbol"] and doc["name"]:
-                    await coll.insert_one(doc)
+        needs_update = body.capital is not None or body.assets is not None
+        if not needs_update:
+            return api_success(data=None, message="更新成功")
+
+        client = db.client
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                await update_assets_service(
+                    db,
+                    capital=body.capital,
+                    assets=body.assets,
+                    session=session,
+                )
         return api_success(data=None, message="更新成功")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("assets_update 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{asset_id}")
@@ -550,11 +567,13 @@ async def get_asset(
         coll = db[COLLECTION]
         doc = await coll.find_one({"_id": ObjectId(asset_id)})
         if not doc:
-            return api_error(code=404, message="资产不存在")
+            raise HTTPException(status_code=404, detail="资产不存在")
         return api_success(data=_serialize_doc(doc))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("get_asset 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/{asset_id}")
@@ -571,14 +590,16 @@ async def update_asset(
         result = await coll.find_one_and_update(
             {"_id": ObjectId(asset_id)},
             {"$set": doc},
-            return_document=ReturnDocument.AFTER,
+            return_document="after",
         )
         if not result:
-            return api_error(code=404, message="资产不存在")
+            raise HTTPException(status_code=404, detail="资产不存在")
         return api_success(data=_serialize_doc(result))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("update_asset 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/{asset_id}")
@@ -591,8 +612,10 @@ async def delete_asset(
         coll = db[COLLECTION]
         result = await coll.delete_one({"_id": ObjectId(asset_id)})
         if result.deleted_count == 0:
-            return api_error(code=404, message="资产不存在")
+            raise HTTPException(status_code=404, detail="资产不存在")
         return api_success(data=None, message="已删除")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("delete_asset 异常: %s", e)
-        return api_error(code=500, message=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
