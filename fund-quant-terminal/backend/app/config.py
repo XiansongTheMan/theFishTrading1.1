@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
 
-    # CORS 允许的源（逗号分隔）
-    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # CORS 允许的源（逗号分隔）。设为 * 表示允许所有源（开发方便，生产慎用）
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176,http://127.0.0.1:5174,http://127.0.0.1:5175,http://127.0.0.1:5176"
 
     # 新闻 RSS 源（逗号分隔，URL 中 {fund_code} 会替换为基金代码）
     NEWS_FEED_URLS: str = "https://rsshub.app/finance/eastmoney/roll,https://rsshub.app/finance/eastmoney/fund/{fund_code},https://rsshub.app/finance/sina/roll"

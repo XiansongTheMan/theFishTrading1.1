@@ -9,8 +9,14 @@ import axios, { type InternalAxiosRequestConfig } from "axios";
 import { ElLoading, ElMessage } from "element-plus";
 import type { LoadingInstance } from "element-plus/es/components/loading/src/loading";
 
+// 开发环境走 Vite 代理（同源），避免 CORS；生产环境可配 VITE_API_BASE
+const apiBase =
+  typeof import.meta !== "undefined" && import.meta.env?.DEV
+    ? "/api"
+    : (import.meta.env?.VITE_API_BASE as string) || "http://localhost:8000/api";
+
 export const request = axios.create({
-  baseURL: "http://localhost:8000/api",
+  baseURL: apiBase,
   timeout: 15000,
 });
 

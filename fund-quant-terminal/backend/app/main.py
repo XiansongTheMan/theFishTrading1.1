@@ -75,6 +75,7 @@ async def _sync_grok_prompt_to_file():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理：startup 创建索引，shutdown 关闭 Motor 客户端"""
+    global _scheduler
     from app.database import create_indexes
 
     # ----- Startup -----
@@ -94,7 +95,6 @@ async def lifespan(app: FastAPI):
 
         await _sync_grok_prompt_to_file()
 
-        global _scheduler
         _scheduler = AsyncIOScheduler()
         _scheduler.add_job(_scheduled_news_fetch, "interval", hours=4, id="news_fetch")
         _scheduler.start()
@@ -106,7 +106,6 @@ async def lifespan(app: FastAPI):
     yield
 
     # ----- Shutdown -----
-    global _scheduler
     if _scheduler:
         _scheduler.shutdown(wait=False)
         _scheduler = None
@@ -155,13 +154,17 @@ async def generic_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     return _error_response(500, "Internal server error", str(exc))
 
 
-# CORS 严格配置：origins 从 config.py / CORS_ORIGINS 环境变量加载
+# CORS：若 CORS_ORIGINS=* 则允许所有源；否则用列表+正则匹配 localhost 任意端口
+_cors_origins = settings.cors_origins_list
+_allow_all = "*" in _cors_origins or not _cors_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With"],
+    allow_origins=["*"] if _allow_all else _cors_origins,
+    allow_origin_regex=None if _allow_all else r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_credentials=False if _allow_all else True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # 数据路由：/api/data/fetch, /api/data/history, /api/data/funds 等

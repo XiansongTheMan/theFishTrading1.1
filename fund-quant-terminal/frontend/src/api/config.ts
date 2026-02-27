@@ -24,3 +24,12 @@ export const testToken = (key: string, value?: string) =>
     key,
     value: value ?? undefined,
   });
+
+/** 关注基金列表（定时新闻抓取） */
+export const getWatchedFunds = () =>
+  request.get<{ data: { fund_codes: string[] } }>("/config/watched-funds");
+
+export const updateWatchedFunds = (fundCodes: string[]) =>
+  request.put<{ data: { fund_codes: string[] } }>("/config/watched-funds", {
+    fund_codes: fundCodes,
+  });

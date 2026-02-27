@@ -37,6 +37,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: "资产" },
   },
   {
+    path: "/news",
+    name: "News",
+    component: () => import("../views/NewsView.vue"),
+    meta: { title: "新闻" },
+  },
+  {
     path: "/holding/:assetType/:symbol",
     name: "HoldingDetail",
     component: () => import("../views/HoldingDetailView.vue"),
@@ -53,6 +59,12 @@ const routes: RouteRecordRaw[] = [
     name: "Settings",
     component: () => import("../views/SettingsView.vue"),
     meta: { title: "设置" },
+  },
+  {
+    path: "/interfaces",
+    name: "Interfaces",
+    component: () => import("../views/InterfacesView.vue"),
+    meta: { title: "接口" },
   },
   {
     path: "/mongo-test",

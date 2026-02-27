@@ -33,10 +33,12 @@ const topMenuItems = [
   { path: "/decisions", name: "决策日志", icon: "Document" },
   { path: "/curve", name: "资产曲线", icon: "TrendCharts" },
   { path: "/assets", name: "资产", icon: "Wallet" },
+  { path: "/news", name: "新闻", icon: "DocumentCopy" },
 ];
 
 const settingsSubItems = [
   { path: "/settings", name: "通用" },
+  { path: "/interfaces", name: "接口" },
   { path: "/grok-prompt", name: "Grok AI 角色设定" },
   { path: "/token", name: "Token" },
   { path: "/mongo-test", name: "MongoDB 连接测试" },

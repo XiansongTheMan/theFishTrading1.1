@@ -38,6 +38,9 @@ async def news_fetch(
     try:
         if refresh:
             items = await news_service.fetch_and_save(db, fund_code=fund_code, days=days)
+            # 若 RSS 抓取为空，回退到 DB 已有数据（定时任务或历史抓取）
+            if not items:
+                items = await news_service.get_news(db, fund_code=fund_code, days=days)
         else:
             items = await news_service.get_news(db, fund_code=fund_code, days=days)
         # 按 pub_date 倒序
