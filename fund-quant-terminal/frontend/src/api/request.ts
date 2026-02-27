@@ -6,9 +6,8 @@
 // =====================================================
 
 import axios, { type InternalAxiosRequestConfig } from "axios";
-import { ElLoading } from "element-plus";
+import { ElLoading, ElMessage } from "element-plus";
 import type { LoadingInstance } from "element-plus/es/components/loading/src/loading";
-import { toast } from "../utils/toast";
 
 export const request = axios.create({
   baseURL: "http://localhost:8000/api",
@@ -91,7 +90,7 @@ request.interceptors.response.use(
     const data = res.data as ApiResponse;
     if (data.code !== undefined && data.code !== 200) {
       const msg = data.message || "请求失败";
-      toast.error(msg);
+      if (!res.config.skipLoading) ElMessage.error(msg);
       const e = new Error(msg) as Error & { _toastShown?: boolean };
       e._toastShown = true;
       return Promise.reject(e);
@@ -101,8 +100,26 @@ request.interceptors.response.use(
   (err) => {
     if (err?.config) hideLoading(err.config);
     const msg = getErrorMessage(err);
-    toast.error(msg);
-    console.error("API Error:", err);
+    // skipLoading 时不弹窗（如 60s 后台刷新），由调用方 try/catch 处理
+    if (!err?.config?.skipLoading) {
+      ElMessage.error(msg);
+    }
+    // 401: 未授权；500: 服务器错误；ECONNABORTED: 超时
+    if (axios.isAxiosError(err)) {
+      const status = err.response?.status;
+      const code = err.code;
+      if (status === 401) {
+        // 可在此扩展：清除 token、跳转登录等
+      }
+      if (status === 500) {
+        console.error("API 500:", err.response?.data);
+      }
+      if (code === "ECONNABORTED") {
+        console.warn("API 请求超时");
+      }
+    } else {
+      console.error("API Error:", err);
+    }
     const e = err instanceof Error ? err : new Error(msg);
     (e as Error & { _toastShown?: boolean })._toastShown = true;
     return Promise.reject(e);

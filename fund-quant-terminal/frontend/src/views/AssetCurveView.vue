@@ -8,10 +8,13 @@ import { ref, onMounted, watch } from "vue";
 import { ElCard } from "element-plus";
 import * as echarts from "echarts";
 import { useAppStore } from "../stores/app";
+import { useChartResize } from "../composables/useChartResize";
 
 const chartRef = ref<HTMLElement | null>(null);
 const appStore = useAppStore();
 let chartInstance: echarts.ECharts | null = null;
+
+useChartResize(chartRef, () => chartInstance);
 
 const PROFIT_COLOR = "#67c23a";
 const LOSS_COLOR = "#f56c6c";
@@ -33,7 +36,6 @@ function renderChart() {
 
   if (!chartInstance) {
     chartInstance = echarts.init(chartRef.value);
-    window.addEventListener("resize", () => chartInstance?.resize());
   }
   chartInstance.setOption({
     tooltip: { trigger: "axis", formatter: "{b}<br/>总资产: {c} 元" },
@@ -73,7 +75,7 @@ watch(
           <span class="dot loss"></span> 亏损
         </span>
       </template>
-      <div ref="chartRef" class="chart" style="height: 360px"></div>
+      <div ref="chartRef" class="chart"></div>
       <p v-if="appStore.assetHistory.length === 1" class="hint">
         暂无历史数据，进行交易或更新持仓后会展示曲线
       </p>
@@ -117,5 +119,16 @@ watch(
   margin-top: 12px;
   color: var(--el-text-color-secondary);
   font-size: 0.9rem;
+}
+
+.chart {
+  width: 100%;
+  height: 360px;
+}
+
+@media (max-width: 480px) {
+  .chart {
+    height: 260px;
+  }
 }
 </style>

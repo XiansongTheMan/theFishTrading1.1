@@ -33,3 +33,27 @@ body {
 html.dark {
   color-scheme: dark;
 }
+
+/* 表格横向滚动：移动端 375px 等窄屏 */
+.table-scroll-x {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-scroll-x .el-table {
+  min-width: max-content;
+}
+
+/* 移动端通用：按钮组换行、卡片间距 */
+@media (max-width: 768px) {
+  .el-card .el-button + .el-button {
+    margin-left: 8px;
+  }
+}
+
+/* 375px 测试：确保内容不溢出 */
+@media (max-width: 480px) {
+  .page-title {
+    font-size: 1.1rem;
+  }
+}

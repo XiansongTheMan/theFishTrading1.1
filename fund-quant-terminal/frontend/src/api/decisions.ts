@@ -24,12 +24,14 @@ export interface DecisionLog {
 export const logDecision = (data: Omit<DecisionLog, "id" | "created_at">) =>
   request.post<{ data: DecisionLog }>("/decisions/log", data);
 
-export const getDecisionList = (params?: {
-  limit?: number;
-  skip?: number;
-  fund_code?: string;
-  user_action?: string;
-}) => request.get<{ data: DecisionLog[] }>("/decisions/list", { params });
+export const getDecisionList = (
+  params?: { limit?: number; skip?: number; fund_code?: string; user_action?: string },
+  config?: { skipLoading?: boolean }
+) =>
+  request.get<{ data: DecisionLog[] }>("/decisions/list", {
+    params,
+    skipLoading: config?.skipLoading,
+  });
 
 export const deleteDecision = (id: string) =>
   request.delete(`/decisions/${id}`);

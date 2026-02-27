@@ -25,6 +25,13 @@ import * as echarts from "echarts";
 import { logDecision, getDecisionList, deleteDecision, type DecisionLog } from "../api/decisions";
 import { getAssetsSummary, updateAssets } from "../api/assets";
 import { useAppStore } from "../stores/app";
+import { useChartResize } from "../composables/useChartResize";
+import {
+  fetchExportData,
+  exportToExcel,
+  exportToPdf,
+} from "../utils/export";
+import { withFeedback } from "../utils/feedback";
 
 const appStore = useAppStore();
 const list = ref<DecisionLog[]>([]);
@@ -50,14 +57,19 @@ const form = ref<Partial<DecisionLog>>({
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
-async function loadList() {
+useChartResize(chartRef, () => chartInstance);
+
+async function loadList(opts?: { skipLoading?: boolean }) {
   loading.value = true;
   try {
-    const res = (await getDecisionList()) as unknown as { data?: DecisionLog[] };
+    const res = (await getDecisionList(undefined, { skipLoading: opts?.skipLoading })) as unknown as {
+      data?: DecisionLog[];
+    };
     list.value = Array.isArray(res?.data) ? res.data : [];
     renderPnlChart();
-  } catch {
+  } catch (e) {
     list.value = [];
+    if (!opts?.skipLoading) console.warn("[DecisionLog] loadList 失败:", e);
   } finally {
     loading.value = false;
   }
@@ -65,7 +77,9 @@ async function loadList() {
 
 async function refreshSummary() {
   try {
-    const res = (await getAssetsSummary()) as unknown as { data?: { capital: number; holdings: unknown[] } };
+    const res = (await getAssetsSummary({ skipLoading: true })) as unknown as {
+      data?: { capital: number; holdings: unknown[] };
+    };
     const d = res?.data;
     if (d) {
       appStore.setCapital(d.capital);
@@ -74,7 +88,7 @@ async function refreshSummary() {
       );
     }
   } catch (e) {
-    console.warn("[DecisionLog] refreshSummary 失败:", e);
+    console.warn("[DecisionLog] 60s 刷新 refreshSummary 失败，下次重试:", e);
   }
 }
 
@@ -89,7 +103,6 @@ function renderPnlChart() {
   const pnls = withPnl.map((r) => r.pnl ?? 0);
   if (!chartInstance) {
     chartInstance = echarts.init(chartRef.value);
-    window.addEventListener("resize", () => chartInstance?.resize());
   }
   chartInstance.setOption({
     tooltip: { trigger: "axis" },
@@ -139,6 +152,7 @@ function openAdd() {
   dialogVisible.value = true;
 }
 
+const submitLogging = ref(false);
 async function submitLog() {
   if (!form.value.fund_code?.trim()) {
     ElMessage.warning("请填写基金代码");
@@ -149,29 +163,30 @@ async function submitLog() {
     return;
   }
   try {
-    await logDecision({
-      grok_prompt: form.value.grok_prompt,
-      grok_response: form.value.grok_response,
-      user_action: form.value.user_action,
-      fund_code: form.value.fund_code,
-      amount_rmb: form.value.amount_rmb,
-      nav: form.value.nav,
-      fee: form.value.fee,
-      pnl: form.value.pnl,
-      notes: form.value.notes,
-      capital_before: form.value.capital_before,
-      capital_after: form.value.capital_after,
-    });
-    ElMessage.success("提交成功");
-    dialogVisible.value = false;
+    await withFeedback(submitLogging, async () => {
+      await logDecision({
+        grok_prompt: form.value.grok_prompt,
+        grok_response: form.value.grok_response,
+        user_action: form.value.user_action,
+        fund_code: form.value.fund_code,
+        amount_rmb: form.value.amount_rmb,
+        nav: form.value.nav,
+        fee: form.value.fee,
+        pnl: form.value.pnl,
+        notes: form.value.notes,
+        capital_before: form.value.capital_before,
+        capital_after: form.value.capital_after,
+      });
+      dialogVisible.value = false;
 
-    if (form.value.user_action === "buy" || form.value.user_action === "sell") {
-      const capAfter = form.value.capital_after ?? appStore.totalAssets;
-      await updateAssets({ capital: capAfter });
-    }
+      if (form.value.user_action === "buy" || form.value.user_action === "sell") {
+        const capAfter = form.value.capital_after ?? appStore.totalAssets;
+        await updateAssets({ capital: capAfter });
+      }
 
-    loadList();
-    refreshSummary();
+      loadList();
+      refreshSummary();
+    }, { success: "决策已保存" });
   } catch {
     ElMessage.error("提交失败");
   }
@@ -190,7 +205,10 @@ function copyLatestToClipboard() {
   );
 }
 
+const deleteLoading = ref<string | null>(null);
 async function handleDelete(id: string) {
+  if (deleteLoading.value) return;
+  deleteLoading.value = id;
   try {
     await deleteDecision(id);
     ElMessage.success("已删除");
@@ -198,6 +216,34 @@ async function handleDelete(id: string) {
     refreshSummary();
   } catch {
     ElMessage.error("删除失败");
+  } finally {
+    deleteLoading.value = null;
+  }
+}
+
+const exportLoading = ref(false);
+async function handleExportExcel() {
+  exportLoading.value = true;
+  try {
+    const { summary, decisions } = await fetchExportData();
+    exportToExcel(summary, decisions);
+    ElMessage.success("Excel 已导出");
+  } catch (e) {
+    ElMessage.error((e as Error)?.message ?? "导出失败");
+  } finally {
+    exportLoading.value = false;
+  }
+}
+async function handleExportPdf() {
+  exportLoading.value = true;
+  try {
+    const { summary, decisions } = await fetchExportData();
+    await exportToPdf(summary, decisions);
+    ElMessage.success("PDF 已导出");
+  } catch (e) {
+    ElMessage.error((e as Error)?.message ?? "导出失败");
+  } finally {
+    exportLoading.value = false;
   }
 }
 
@@ -205,7 +251,7 @@ onMounted(() => {
   loadList();
   refreshSummary();
   refreshTimer = setInterval(() => {
-    loadList();
+    loadList({ skipLoading: true });
     refreshSummary();
   }, REFRESH_INTERVAL);
 });
@@ -220,9 +266,14 @@ onUnmounted(() => {
     <h2 class="page-title">决策日志</h2>
 
     <ElCard shadow="never">
-      <ElButton type="primary" @click="openAdd">新增决策</ElButton>
-      <ElButton @click="copyLatestToClipboard" style="margin-left: 8px">复制最新记录</ElButton>
-      <ElTable :data="list" v-loading="loading" style="margin-top: 16px" stripe max-height="400">
+      <div class="action-row">
+        <ElButton type="primary" @click="openAdd">新增决策</ElButton>
+        <ElButton @click="copyLatestToClipboard">复制最新记录</ElButton>
+        <ElButton :loading="exportLoading" @click="handleExportExcel">导出 Excel</ElButton>
+        <ElButton :loading="exportLoading" @click="handleExportPdf">导出 PDF</ElButton>
+      </div>
+      <div class="table-scroll-x" style="margin-top: 16px">
+      <ElTable :data="list" v-loading="loading" stripe max-height="400">
         <ElTableColumn prop="timestamp" label="时间" width="160">
           <template #default="{ row }">{{ formatTime(row.timestamp ?? row.created_at) }}</template>
         </ElTableColumn>
@@ -251,15 +302,16 @@ onUnmounted(() => {
         <ElTableColumn prop="notes" label="备注" min-width="120" show-overflow-tooltip />
         <ElTableColumn label="操作" width="80" fixed="right">
           <template #default="{ row }">
-            <ElButton type="danger" link @click="handleDelete(row.id!)">删除</ElButton>
+            <ElButton type="danger" link :loading="deleteLoading === row.id" :disabled="!!deleteLoading" @click="handleDelete(row.id!)">删除</ElButton>
           </template>
         </ElTableColumn>
       </ElTable>
+      </div>
     </ElCard>
 
     <ElCard v-if="list.some((r) => r.pnl != null)" class="chart-card" shadow="never">
       <template #header>盈亏分布</template>
-      <div ref="chartRef" style="height: 220px"></div>
+      <div ref="chartRef" class="chart"></div>
     </ElCard>
 
     <ElDialog v-model="dialogVisible" title="新增决策" width="520">
@@ -305,7 +357,7 @@ onUnmounted(() => {
       </ElForm>
       <template #footer>
         <ElButton @click="dialogVisible = false">取消</ElButton>
-        <ElButton type="primary" @click="submitLog">提交</ElButton>
+        <ElButton type="primary" :loading="submitLogging" @click="submitLog">提交</ElButton>
       </template>
     </ElDialog>
   </div>
@@ -322,5 +374,22 @@ onUnmounted(() => {
 
 .chart-card {
   margin-top: 20px;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chart {
+  width: 100%;
+  height: 220px;
+}
+
+@media (max-width: 480px) {
+  .chart {
+    height: 180px;
+  }
 }
 </style>

@@ -1,7 +1,7 @@
 # =====================================================
 # 数据库连接与索引初始化
-# 完全异步 MongoDB - 仅使用 motor.motor_asyncio.AsyncIOMotorClient
-# 无 pymongo.MongoClient 同步调用
+# 完全异步 MongoDB - motor.motor_asyncio.AsyncIOMotorClient
+# 无 pymongo 直接导入，所有操作均 await
 # =====================================================
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -29,8 +29,8 @@ async def close_database() -> None:
         _client = None
 
 
-async def ensure_indexes():
-    """启动时自动创建索引"""
+async def ensure_indexes() -> None:
+    """启动时自动创建索引（create_indexes 别名）"""
     db = await get_database()
     try:
         # 决策日志：按时间、基金、动作查询
@@ -70,3 +70,7 @@ async def ensure_indexes():
         logger.info("holding_transactions 索引创建完成")
     except Exception as e:
         logger.warning("holding_transactions 索引: %s", e)
+
+
+# 别名，与 lifespan 中 create_indexes 命名一致
+create_indexes = ensure_indexes

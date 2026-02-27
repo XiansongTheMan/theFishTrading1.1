@@ -17,6 +17,19 @@ import { toast } from "./utils/toast";
 
 import "./style.css";
 
+// 暗色模式：启动前应用，避免闪烁
+(function initDarkMode() {
+  try {
+    const s = localStorage.getItem("fund-quant-app");
+    const data = s ? JSON.parse(s) : {};
+    if (data.darkMode) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  } catch {}
+})();
+
 // 全局错误捕获 - 未处理错误在顶部提示
 function showError(msg: string) {
   toast.error(msg);

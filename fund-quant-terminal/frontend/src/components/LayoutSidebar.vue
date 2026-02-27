@@ -5,17 +5,22 @@
   =====================================================
 -->
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, ref, watch, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import {
   ElContainer,
   ElAside,
   ElMain,
+  ElHeader,
   ElMenu,
   ElMenuItem,
   ElSubMenu,
   ElConfigProvider,
+  ElTooltip,
+  ElButton,
+  ElDrawer,
 } from "element-plus";
+import { Sunny, Moon, Fold } from "@element-plus/icons-vue";
 import zhCn from "element-plus/dist/locale/zh-cn.mjs";
 import { useAppStore } from "../stores/app";
 
@@ -43,6 +48,25 @@ const defaultOpeneds = computed(() =>
     : []
 );
 
+const drawerVisible = ref(false);
+const isMobile = ref(false);
+const MOBILE_BREAK = 768;
+
+function checkMobile() {
+  isMobile.value = window.innerWidth < MOBILE_BREAK;
+}
+onMounted(() => {
+  checkMobile();
+  window.addEventListener("resize", checkMobile);
+});
+onUnmounted(() => {
+  window.removeEventListener("resize", checkMobile);
+});
+
+function closeDrawer() {
+  drawerVisible.value = false;
+}
+
 watch(
   () => appStore.darkMode,
   (isDark) => {
@@ -54,44 +78,89 @@ watch(
   },
   { immediate: true }
 );
+
+watch(route, () => closeDrawer());
 </script>
 
 <template>
   <ElConfigProvider :locale="zhCn">
-    <ElContainer class="layout-container" :class="{ dark: appStore.darkMode }">
-      <ElAside class="sidebar" width="220px">
-        <div class="logo">基金量化终端</div>
-        <ElMenu
-          :default-active="route.path"
-          :default-openeds="defaultOpeneds"
-          router
-          class="sidebar-menu"
-          background-color="var(--el-bg-color)"
-          text-color="var(--el-text-color-primary)"
-          active-text-color="var(--el-color-primary)"
-        >
-          <ElMenuItem
-            v-for="item in topMenuItems"
-            :key="item.path"
-            :index="item.path"
+    <ElContainer class="layout-container" direction="vertical" :class="{ dark: appStore.darkMode }">
+      <ElHeader class="app-header">
+        <ElButton
+          v-if="isMobile"
+          :icon="Fold"
+          circle
+          text
+          class="menu-toggle"
+          @click="drawerVisible = true"
+        />
+        <span class="header-spacer" />
+        <ElTooltip :content="appStore.darkMode ? '切换浅色' : '切换深色'" placement="bottom">
+          <ElButton
+            :icon="appStore.darkMode ? Sunny : Moon"
+            circle
+            text
+            @click="appStore.toggleDarkMode()"
+          />
+        </ElTooltip>
+      </ElHeader>
+      <ElContainer class="body-row">
+        <ElAside class="sidebar" :class="{ 'sidebar-hidden': isMobile }" width="220px">
+          <div class="logo">基金量化终端</div>
+          <ElMenu
+            :default-active="route.path"
+            :default-openeds="defaultOpeneds"
+            router
+            class="sidebar-menu"
+            background-color="var(--el-bg-color)"
+            text-color="var(--el-text-color-primary)"
+            active-text-color="var(--el-color-primary)"
           >
-            <span>{{ item.name }}</span>
-          </ElMenuItem>
-          <ElSubMenu index="settings">
-            <template #title>设置</template>
-            <ElMenuItem
-              v-for="item in settingsSubItems"
-              :key="item.path"
-              :index="item.path"
-            >
+            <ElMenuItem v-for="item in topMenuItems" :key="item.path" :index="item.path">
               <span>{{ item.name }}</span>
             </ElMenuItem>
-          </ElSubMenu>
-        </ElMenu>
-      </ElAside>
-      <ElMain class="main-content">
-        <slot />
-      </ElMain>
+            <ElSubMenu index="settings">
+              <template #title>设置</template>
+              <ElMenuItem v-for="item in settingsSubItems" :key="item.path" :index="item.path">
+                <span>{{ item.name }}</span>
+              </ElMenuItem>
+            </ElSubMenu>
+          </ElMenu>
+        </ElAside>
+        <ElDrawer
+          v-model="drawerVisible"
+          title="导航"
+          direction="ltr"
+          size="280px"
+          :show-close="true"
+          class="nav-drawer"
+        >
+          <div class="drawer-logo">基金量化终端</div>
+          <ElMenu
+            :default-active="route.path"
+            :default-openeds="defaultOpeneds"
+            router
+            class="drawer-menu"
+            background-color="transparent"
+            text-color="var(--el-text-color-primary)"
+            active-text-color="var(--el-color-primary)"
+            @select="closeDrawer"
+          >
+            <ElMenuItem v-for="item in topMenuItems" :key="item.path" :index="item.path">
+              <span>{{ item.name }}</span>
+            </ElMenuItem>
+            <ElSubMenu index="settings">
+              <template #title>设置</template>
+              <ElMenuItem v-for="item in settingsSubItems" :key="item.path" :index="item.path">
+                <span>{{ item.name }}</span>
+              </ElMenuItem>
+            </ElSubMenu>
+          </ElMenu>
+        </ElDrawer>
+        <ElMain class="main-content">
+          <slot />
+        </ElMain>
+      </ElContainer>
     </ElContainer>
   </ElConfigProvider>
 </template>
@@ -99,6 +168,25 @@ watch(
 <style scoped>
 .layout-container {
   min-height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color);
+}
+
+.header-spacer {
+  flex: 1;
+}
+
+.body-row {
+  flex: 1;
+  min-height: 0;
 }
 
 .sidebar {
@@ -119,22 +207,36 @@ watch(
 }
 
 .main-content {
-  padding: 20px;
+  padding: 12px;
   background: var(--el-fill-color-light);
+}
+
+@media (min-width: 768px) {
+  .main-content {
+    padding: 20px;
+  }
 }
 
 .layout-container.dark .main-content {
   background: var(--el-bg-color-page);
 }
 
-@media (max-width: 768px) {
-  .sidebar {
-    width: 64px !important;
-  }
+.sidebar-hidden {
+  display: none !important;
+}
 
-  .logo {
-    font-size: 0.85rem;
-    padding: 0 8px 16px;
-  }
+.menu-toggle {
+  margin-right: 8px;
+}
+
+.drawer-logo {
+  padding: 0 0 20px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.drawer-menu {
+  border: none;
 }
 </style>

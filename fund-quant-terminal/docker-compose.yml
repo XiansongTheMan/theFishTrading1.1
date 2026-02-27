@@ -1,6 +1,6 @@
 # =====================================================
 # fund-quant-terminal Docker Compose
-# MongoDB + Backend API，数据持久化到 ./data
+# MongoDB + Backend API，数据持久化到 ./mongodb_data
 # 使用: docker compose up -d
 # =====================================================
 
@@ -16,7 +16,7 @@ services:
     ports:
       - "27017:27017"
     volumes:
-      - ./data:/data/db
+      - ./mongodb_data:/data/db
     networks:
       - fund-quant-network
     healthcheck:

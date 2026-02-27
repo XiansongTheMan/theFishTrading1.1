@@ -34,6 +34,8 @@ import {
 } from "../api/assets";
 import { getFundInfo, getStockInfo } from "../api/data";
 import { useAppStore } from "../stores/app";
+import { fetchExportData, exportToExcel, exportToPdf } from "../utils/export";
+import { withFeedback } from "../utils/feedback";
 
 const appStore = useAppStore();
 const router = useRouter();
@@ -96,16 +98,14 @@ async function loadSummary() {
 }
 
 async function saveCapital() {
-  capitalSaving.value = true;
   try {
-    await updateAssets({ capital: capitalEdit.value });
-    appStore.setCapital(capitalEdit.value);
-    ElMessage.success("现金已保存");
-    await loadSummary();
+    await withFeedback(capitalSaving, async () => {
+      await updateAssets({ capital: capitalEdit.value });
+      appStore.setCapital(capitalEdit.value);
+      await loadSummary();
+    }, { success: "现金已保存" });
   } catch {
     ElMessage.error("保存失败");
-  } finally {
-    capitalSaving.value = false;
   }
 }
 
@@ -157,15 +157,13 @@ async function submitAdd() {
     }
   }
 
-  addSaving.value = true;
   try {
+    await withFeedback(addSaving, async () => {
     if (isFund) {
       const res = (await getFundInfo(symbol)) as { data?: { name: string; nav: number } };
       const info = res?.data;
       if (!info?.nav || info.nav <= 0) {
-        ElMessage.error("无法获取基金净值，请检查代码或在数据终端先行拉取");
-        addSaving.value = false;
-        return;
+        throw new Error("无法获取基金净值，请检查代码或在数据终端先行拉取");
       }
       const amount = addForm.value.initial_amount ?? 0;
       const loss = addForm.value.initial_loss ?? 0;
@@ -203,14 +201,12 @@ async function submitAdd() {
         asset_type: "stock",
       });
     }
-    ElMessage.success("添加成功");
     addDialogVisible.value = false;
     await loadSummary();
+    }, { success: "添加成功" });
   } catch (e) {
     const msg = (e as Error)?.message || "添加失败";
     ElMessage.error(msg);
-  } finally {
-    addSaving.value = false;
   }
 }
 
@@ -256,28 +252,27 @@ async function submitEdit() {
     ElMessage.warning("请填写代码和名称");
     return;
   }
-  editSaving.value = true;
   try {
-    await updateAsset(editingId.value, {
-      symbol: editForm.value.symbol.trim(),
-      name: editForm.value.name.trim(),
-      quantity: editForm.value.quantity ?? 0,
-      cost_price: editForm.value.cost_price,
-      current_price: editForm.value.current_price,
-      asset_type: editForm.value.asset_type ?? "fund",
-    });
-    ElMessage.success("修改成功");
-    editDialogVisible.value = false;
-    await loadSummary();
+    await withFeedback(editSaving, async () => {
+      await updateAsset(editingId.value!, {
+        symbol: editForm.value.symbol!.trim(),
+        name: editForm.value.name!.trim(),
+        quantity: editForm.value.quantity ?? 0,
+        cost_price: editForm.value.cost_price,
+        current_price: editForm.value.current_price,
+        asset_type: editForm.value.asset_type ?? "fund",
+      });
+      editDialogVisible.value = false;
+      await loadSummary();
+    }, { success: "资产已更新" });
   } catch {
     ElMessage.error("修改失败");
-  } finally {
-    editSaving.value = false;
   }
 }
 
+const deleteLoading = ref<string | null>(null);
 async function handleDelete(row: Asset) {
-  if (!row.id) return;
+  if (!row.id || deleteLoading.value) return;
   try {
     await ElMessageBox.confirm(`确定删除 ${row.name}（${row.symbol}）？`, "确认删除", {
       type: "warning",
@@ -285,12 +280,15 @@ async function handleDelete(row: Asset) {
   } catch {
     return;
   }
+  deleteLoading.value = row.id;
   try {
     await deleteAsset(row.id);
     ElMessage.success("已删除");
     await loadSummary();
   } catch {
     ElMessage.error("删除失败");
+  } finally {
+    deleteLoading.value = null;
   }
 }
 
@@ -314,19 +312,43 @@ function goToDetail(row: Asset) {
 }
 
 const syncLoading = ref(false);
-async function handleSync() {
-  syncLoading.value = true;
+const exportLoading = ref(false);
+async function handleExportExcel() {
+  exportLoading.value = true;
   try {
-    const res = (await syncAssets()) as { data?: { updated?: number; failed?: number; total?: number } };
-    const d = res?.data;
-    ElMessage.success(
-      d ? `同步完成：成功 ${d.updated ?? 0}，失败 ${d.failed ?? 0}` : "同步完成"
-    );
-    await loadSummary();
+    const { summary, decisions } = await fetchExportData();
+    exportToExcel(summary, decisions);
+    ElMessage.success("Excel 已导出");
+  } catch (e) {
+    ElMessage.error((e as Error)?.message ?? "导出失败");
+  } finally {
+    exportLoading.value = false;
+  }
+}
+async function handleExportPdf() {
+  exportLoading.value = true;
+  try {
+    const { summary, decisions } = await fetchExportData();
+    await exportToPdf(summary, decisions);
+    ElMessage.success("PDF 已导出");
+  } catch (e) {
+    ElMessage.error((e as Error)?.message ?? "导出失败");
+  } finally {
+    exportLoading.value = false;
+  }
+}
+async function handleSync() {
+  try {
+    await withFeedback(syncLoading, async () => {
+      const res = (await syncAssets()) as { data?: { updated?: number; failed?: number; total?: number } };
+      const d = res?.data;
+      await loadSummary();
+      return d;
+    }, {
+      success: (d) => d ? `同步完成：成功 ${d.updated ?? 0}，失败 ${d.failed ?? 0}` : "数据已刷新",
+    });
   } catch {
     ElMessage.error("同步失败");
-  } finally {
-    syncLoading.value = false;
   }
 }
 
@@ -372,16 +394,17 @@ onMounted(loadSummary);
     <ElCard shadow="never" class="card">
       <template #header>
         <span>当前持仓</span>
-        <ElButton
-          type="primary"
-          size="small"
-          :loading="syncLoading"
-          @click="handleSync"
-          style="margin-left: 12px"
-        >
+        <ElButton type="primary" size="small" :loading="syncLoading" @click="handleSync" style="margin-left: 12px">
           同步
         </ElButton>
+        <ElButton size="small" :loading="exportLoading" @click="handleExportExcel" style="margin-left: 8px">
+          导出 Excel
+        </ElButton>
+        <ElButton size="small" :loading="exportLoading" @click="handleExportPdf" style="margin-left: 8px">
+          导出 PDF
+        </ElButton>
       </template>
+      <div class="table-scroll-x">
       <ElTable
         :data="summary?.holdings ?? []"
         v-loading="loading"
@@ -421,12 +444,13 @@ onMounted(loadSummary);
             <ElButton type="primary" link size="small" @click.stop="openEditDialog(row)">
               编辑
             </ElButton>
-            <ElButton type="danger" link size="small" @click.stop="handleDelete(row)">
+            <ElButton type="danger" link size="small" :loading="deleteLoading === row.id" :disabled="!!deleteLoading" @click.stop="handleDelete(row)">
               删除
             </ElButton>
           </template>
         </ElTableColumn>
       </ElTable>
+      </div>
       <div v-if="!loading && (!summary?.holdings?.length)" class="empty-tip">
         暂无持仓，请点击上方「新增」添加
       </div>

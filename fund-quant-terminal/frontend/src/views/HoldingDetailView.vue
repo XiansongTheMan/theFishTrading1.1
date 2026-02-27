@@ -19,6 +19,7 @@ import {
   type HoldingTransaction,
   type HoldingSummary,
 } from "../api/assets";
+import { useChartResize } from "../composables/useChartResize";
 
 const route = useRoute();
 const router = useRouter();
@@ -223,6 +224,7 @@ async function submitTx() {
       return;
     }
   }
+  if (txSubmitting.value) return;
   txSubmitting.value = true;
   try {
     await createTransaction({
@@ -246,15 +248,21 @@ async function submitTx() {
   }
 }
 
+const deleteTxLoading = ref<string | null>(null);
 async function handleDeleteTx(t: HoldingTransaction) {
   const id = t.id;
-  if (!id) return;
+  if (!id || deleteTxLoading.value) return;
   try {
     await ElMessageBox.confirm("确定删除该笔交易记录？将同时反向调整持仓。", "删除确认", {
       confirmButtonText: "删除",
       cancelButtonText: "取消",
       type: "warning",
     });
+  } catch {
+    return;
+  }
+  deleteTxLoading.value = id;
+  try {
     await deleteTransaction(assetType.value, symbol.value, id);
     ElMessage.success("已删除");
     await loadData();
@@ -264,10 +272,14 @@ async function handleDeleteTx(t: HoldingTransaction) {
     if ((e as { type?: string })?.type !== "cancel") {
       ElMessage.error((e as Error)?.message || "删除失败");
     }
+  } finally {
+    deleteTxLoading.value = null;
   }
 }
 
+const clearLoading = ref(false);
 async function handleClearAll() {
+  if (clearLoading.value) return;
   try {
     await ElMessageBox.confirm(
       "确定强制清空该基金的全部历史操作？将同时移除对应持仓，此操作不可恢复。",
@@ -278,6 +290,11 @@ async function handleClearAll() {
         type: "warning",
       }
     );
+  } catch {
+    return;
+  }
+  clearLoading.value = true;
+  try {
     const res = (await clearHoldingTransactions(assetType.value, symbol.value)) as { data?: { deleted?: number } };
     const count = res?.data?.deleted ?? 0;
     ElMessage.success(`已清空 ${count} 条历史操作`);
@@ -288,6 +305,8 @@ async function handleClearAll() {
     if ((e as { type?: string })?.type !== "cancel") {
       ElMessage.error((e as Error)?.message || "清空失败");
     }
+  } finally {
+    clearLoading.value = false;
   }
 }
 
@@ -423,6 +442,8 @@ async function handleRefreshPage() {
   renderChart();
 }
 
+useChartResize(chartRef, () => chartInstance);
+
 watch([chartRef, chartData, dateRange, transactions], () => {
   if (chartData.value.length > 0) renderChart();
 }, { immediate: true });
@@ -432,10 +453,6 @@ watch(
   () => loadData(),
   { immediate: true }
 );
-
-onMounted(() => {
-  window.addEventListener("resize", () => chartInstance?.resize());
-});
 </script>
 
 <template>
@@ -528,6 +545,8 @@ onMounted(() => {
               type="danger"
               plain
               size="small"
+              :loading="clearLoading"
+              :disabled="clearLoading"
               @click="handleClearAll"
             >
               强制清空
@@ -551,7 +570,7 @@ onMounted(() => {
           <span class="price">¥{{ t.price.toFixed(4) }}</span>
           <span class="amount">¥{{ (t.amount ?? t.quantity * t.price).toFixed(2) }}</span>
           <ElTooltip content="删除该笔交易记录，并反向调整持仓" placement="top">
-            <ElButton type="danger" link size="small" @click="handleDeleteTx(t)">删除</ElButton>
+            <ElButton type="danger" link size="small" :loading="deleteTxLoading === t.id" :disabled="!!deleteTxLoading" @click="handleDeleteTx(t)">删除</ElButton>
           </ElTooltip>
         </div>
       </div>
@@ -755,6 +774,12 @@ onMounted(() => {
 .chart-container {
   width: 100%;
   height: 420px;
+}
+
+@media (max-width: 480px) {
+  .chart-container {
+    height: 280px;
+  }
 }
 
 .error-tip,

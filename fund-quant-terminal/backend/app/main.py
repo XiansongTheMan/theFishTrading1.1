@@ -43,7 +43,7 @@ async def _sync_grok_prompt_to_file():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理：startup 创建索引，shutdown 关闭 Motor 客户端"""
-    from app.database import ensure_indexes
+    from app.database import create_indexes
 
     # ----- Startup -----
     try:
@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
         await db.command("ping")
         logger.info("MongoDB 连接成功, 数据库: %s", settings.MONGODB_DB_NAME)
 
-        await ensure_indexes()
+        await create_indexes()
         logger.info("Database indexes created successfully")
 
         doc = await db["config"].find_one({"_id": "tokens"})
@@ -112,13 +112,13 @@ async def generic_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     return _error_response(500, "Internal server error", str(exc))
 
 
-# CORS 严格配置：origins 从 CORS_ORIGINS 环境变量加载，无通配符
+# CORS 严格配置：origins 从 config.py / CORS_ORIGINS 环境变量加载
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With"],
 )
 
 # 数据路由：/api/data/fetch, /api/data/history, /api/data/funds 等
