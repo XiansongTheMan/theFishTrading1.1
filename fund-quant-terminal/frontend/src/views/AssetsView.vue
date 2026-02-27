@@ -306,6 +306,18 @@ function currentProfit(row: Asset) {
   return profit >= 0 ? `+${profit.toFixed(2)}` : profit.toFixed(2);
 }
 
+function currentProfitValue(row: Asset): number | null {
+  const curr = row.current_price;
+  const cost = row.cost_price ?? 0;
+  if (curr == null || row.quantity == null) return null;
+  return (curr - cost) * row.quantity;
+}
+
+function profitCellClass(profit: number | null): Record<string, boolean> {
+  if (profit == null) return {};
+  return { "profit-red": profit > 0, "profit-green": profit < 0 };
+}
+
 function goToDetail(row: Asset) {
   const sym = row.symbol?.trim().split(".")[0];
   const type = row.asset_type === "stock" ? "stock" : "fund";
@@ -473,7 +485,9 @@ onMounted(loadSummary);
         </ElTableColumn>
         <ElTableColumn label="当前收益" width="100" align="right">
           <template #default="{ row }">
-            {{ currentProfit(row) }}
+            <span :class="profitCellClass(currentProfitValue(row))">
+              {{ currentProfit(row) }}
+            </span>
           </template>
         </ElTableColumn>
         <ElTableColumn prop="current_price" label="现价" width="100" align="right">
@@ -708,6 +722,14 @@ onMounted(loadSummary);
   gap: 24px;
   font-size: 0.95rem;
   color: var(--el-text-color-primary);
+}
+
+/* 收益颜色：正红负绿（中国股市习惯） */
+.profit-red {
+  color: var(--el-color-danger);
+}
+.profit-green {
+  color: var(--el-color-success);
 }
 
 .help-content {

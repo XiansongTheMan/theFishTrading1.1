@@ -29,8 +29,9 @@ class GrokPromptSave(BaseModel):
 class GrokDecisionRequest(BaseModel):
     """Grok 决策请求"""
 
-    fund_code: str = Field(..., description="基金代码")
+    fund_code: str = Field("", description="基金代码，空则为全局/市场")
     include_news: bool = Field(True, description="是否在响应中包含新闻摘要列表")
+    news_links: list[str] | None = Field(None, description="指定新闻 link 列表，优先于 fund_code 查询")
 
 
 @router.get("/grok-prompt")
@@ -125,13 +126,14 @@ async def post_grok_decision(
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    生成 Grok 决策提示词：基于基金最近 72 小时新闻与情绪分析，输出可直接复制的完整提示
+    生成 Grok 决策提示词：基于基金或指定新闻，输出可直接复制的完整提示
     """
     try:
         prompt, news_summary = await generate_grok_prompt(
-            body.fund_code,
+            body.fund_code or "",
             db,
             include_news_list=body.include_news,
+            custom_news_links=body.news_links,
         )
         data = {"prompt": prompt}
         if body.include_news:

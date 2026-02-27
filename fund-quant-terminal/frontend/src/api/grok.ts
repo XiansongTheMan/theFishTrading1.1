@@ -35,8 +35,25 @@ export interface GrokDecisionNewsItem {
   content_summary: string;
 }
 
-export const fetchGrokDecision = (fundCode: string, includeNews = true) =>
-  request.post<{ data: { prompt: string; news_summary?: GrokDecisionNewsItem[] } }>(
+export interface GrokDecisionParams {
+  fund_code?: string;
+  include_news?: boolean;
+  news_links?: string[];
+}
+
+export const fetchGrokDecision = (
+  params: GrokDecisionParams | string,
+  includeNews = true
+) => {
+  const body: Record<string, unknown> =
+    typeof params === "string"
+      ? { fund_code: params, include_news: includeNews }
+      : { fund_code: params.fund_code ?? "", include_news: params.include_news ?? includeNews };
+  if (params && typeof params === "object" && Array.isArray(params.news_links)) {
+    body.news_links = params.news_links;
+  }
+  return request.post<{ data: { prompt: string; news_summary?: GrokDecisionNewsItem[] } }>(
     "/grok-decision",
-    { fund_code: fundCode, include_news: includeNews }
+    body
   );
+};

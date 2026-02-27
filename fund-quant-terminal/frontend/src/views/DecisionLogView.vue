@@ -308,6 +308,22 @@ onMounted(() => {
     loadList({ skipLoading: true });
     refreshSummary();
   }, REFRESH_INTERVAL);
+  // 从 NewsView「保存为决策」跳转：填入 grok 提示并打开新增弹窗
+  try {
+    const raw = sessionStorage.getItem("grokPromptFromNews");
+    if (raw) {
+      sessionStorage.removeItem("grokPromptFromNews");
+      const { grok_prompt, fund_code } = JSON.parse(raw) as { grok_prompt?: string; fund_code?: string };
+      if (grok_prompt) {
+        form.value.grok_prompt = grok_prompt;
+        form.value.fund_code = fund_code ?? "";
+        dialogVisible.value = true;
+        ElMessage.success("已填入 Grok 提示词，请完善并提交");
+      }
+    }
+  } catch {
+    /* ignore */
+  }
 });
 
 onUnmounted(() => {

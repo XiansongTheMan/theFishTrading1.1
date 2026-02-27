@@ -18,6 +18,26 @@ NEWS_COLLECTION = "news_raw"
 SOURCE_EASTMONEY = "eastmoney"
 SOURCE_SINA = "sina"
 
+# 情绪分析关键词
+POSITIVE_KEYWORDS = ["利好", "上涨", "买入", "大涨", "看涨", "反弹", "增长", "突破", "增持", "推荐"]
+NEGATIVE_KEYWORDS = ["利空", "下跌", "卖出", "大跌", "看跌", "回落", "跌破", "亏损", "减持", "预警"]
+
+
+def _compute_sentiment(text: str) -> float:
+    """
+    基于正负向关键词计算情绪得分，范围 -1 ~ 1。
+    保存到 news_raw 的 sentiment 字段。
+    """
+    if not text or not isinstance(text, str):
+        return 0.0
+    t = text.strip()
+    pos = sum(1 for k in POSITIVE_KEYWORDS if k in t)
+    neg = sum(1 for k in NEGATIVE_KEYWORDS if k in t)
+    total = pos + neg
+    if total == 0:
+        return 0.0
+    return round((pos - neg) / max(total, 1), 2)
+
 
 def _parse_pub_date(entry: Dict[str, Any]) -> Optional[datetime]:
     """解析 RSS 条目的发布时间"""
@@ -145,14 +165,17 @@ class NewsFetchService:
                     if not title and not link:
                         continue
 
+                    content_summary = _extract_summary(entry)
+                    text_for_sentiment = f"{title} {content_summary}"
                     doc = {
                         "title": title,
                         "link": link,
                         "pub_date": pub_dt,
                         "source": source,
-                        "content_summary": _extract_summary(entry),
+                        "content_summary": content_summary,
                         "fund_code": (fund_code or "").strip() or None,
                         "created_at": datetime.utcnow(),
+                        "sentiment": _compute_sentiment(text_for_sentiment),
                     }
 
                     all_news.append(doc)
@@ -204,3 +227,52 @@ class NewsFetchService:
                 d["created_at"] = d["created_at"].isoformat()
             out.append(d)
         return out
+
+    async def get_news_paginated(
+        self,
+        db,
+        fund_code: Optional[str] = None,
+        days: int = 7,
+        keyword: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """
+        分页查询 news_raw，支持 keyword 全文搜索
+        返回 (items, total_count)，items 已格式化（去除 _id，日期转字符串）
+        """
+        cutoff = datetime.utcnow() - timedelta(days=max(1, days))
+        conditions: List[Dict[str, Any]] = [{"pub_date": {"$gte": cutoff}}]
+
+        if fund_code and fund_code.strip():
+            fc = fund_code.strip()
+            conditions.append({
+                "$or": [
+                    {"fund_code": fc},
+                    {"fund_code": {"$in": [None, ""]}},
+                    {"fund_code": {"$exists": False}},
+                ],
+            })
+
+        if keyword and keyword.strip():
+            kw = keyword.strip()
+            regex = {"$regex": kw, "$options": "i"}
+            conditions.append({"$or": [{"title": regex}, {"content_summary": regex}]})
+
+        query = {"$and": conditions} if len(conditions) > 1 else conditions[0]
+
+        total = await db[NEWS_COLLECTION].count_documents(query)
+        skip = max(0, (page - 1) * limit)
+        cursor = db[NEWS_COLLECTION].find(query).sort("pub_date", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+
+        out = []
+        for d in docs:
+            d = dict(d)
+            d.pop("_id", None)
+            if d.get("pub_date") and hasattr(d["pub_date"], "isoformat"):
+                d["pub_date"] = d["pub_date"].isoformat()
+            if d.get("created_at") and hasattr(d["created_at"], "isoformat"):
+                d["created_at"] = d["created_at"].isoformat()
+            out.append(d)
+        return out, total

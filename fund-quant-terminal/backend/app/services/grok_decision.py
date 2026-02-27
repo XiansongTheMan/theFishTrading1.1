@@ -40,42 +40,48 @@ async def generate_grok_prompt(
     db: AsyncIOMotorDatabase,
     limit: int = 10,
     include_news_list: bool = True,
+    custom_news_links: Optional[List[str]] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """
     生成 Grok 决策提示词
-    - 从 MongoDB news_raw 抓取最近 72 小时内最新 10 条新闻
+    - custom_news_links: 若提供，则按 link 查询指定新闻；否则按 fund_code + 72h 查询
     - 简单情绪分析：统计正/负向关键词
-    - 输出结构化提示，要求以专业量化基金经理身份给出买卖建议、理由、仓位、止损位
     Returns: (prompt, news_summary_list)
     """
-    code = (fund_code or "").strip().split(".")[0]
-    if not code:
-        code = fund_code or ""
-    code = code.zfill(6)
+    code = (fund_code or "").strip().split(".")[0] if fund_code else ""
+    code = code.zfill(6) if code else ""
 
     # 1. 获取基金名称
-    data_service = DataFetcherService()
-    fund_name: Optional[str] = None
-    try:
-        fund_name = await data_service.get_fund_name(code)
-    except Exception as e:
-        logger.debug("get_fund_name 失败 %s: %s", code, e)
-    display_name = fund_name or f"基金{code}"
+    display_name = "市场"
+    if code:
+        data_service = DataFetcherService()
+        fund_name: Optional[str] = None
+        try:
+            fund_name = await data_service.get_fund_name(code)
+        except Exception as e:
+            logger.debug("get_fund_name 失败 %s: %s", code, e)
+        display_name = fund_name or f"基金{code}"
 
-    # 2. 从 MongoDB 查询最近 72 小时新闻
-    cutoff = datetime.utcnow() - timedelta(hours=HOURS_WINDOW)
-    cursor = db[NEWS_COLLECTION].find(
-        {
-            "$or": [
+    # 2. 获取新闻：指定 link 列表 或 按 fund+时间 查询
+    if custom_news_links and len(custom_news_links) > 0:
+        links = [l.strip() for l in custom_news_links if l and l.strip()]
+        docs = await db[NEWS_COLLECTION].find({"link": {"$in": links}}).sort("pub_date", -1).limit(limit).to_list(length=limit)
+    else:
+        cutoff = datetime.utcnow() - timedelta(hours=HOURS_WINDOW)
+        q: Dict[str, Any] = {"pub_date": {"$gte": cutoff}}
+        if code:
+            q["$or"] = [
                 {"fund_code": code},
                 {"fund_code": {"$in": [None, ""]}},
                 {"fund_code": {"$exists": False}},
-            ],
-            "pub_date": {"$gte": cutoff},
-        }
-    ).sort("pub_date", -1).limit(limit)
-
-    docs = await cursor.to_list(length=limit)
+            ]
+        else:
+            q["$or"] = [
+                {"fund_code": {"$in": [None, ""]}},
+                {"fund_code": {"$exists": False}},
+            ]
+        cursor = db[NEWS_COLLECTION].find(q).sort("pub_date", -1).limit(limit)
+        docs = await cursor.to_list(length=limit)
 
     # 3. 构建新闻列表 + 简单情绪统计 + news_summary
     total_pos, total_neg = 0, 0
@@ -122,7 +128,8 @@ async def generate_grok_prompt(
         sentiment_note = "\n（未检测到明显情绪关键词）"
 
     # 5. 输出结构化提示
-    prompt = f"""以下是{display_name}（代码 {code}）最近 72 小时新闻与市场情绪汇总：
+    scope = f"{display_name}（代码 {code}）" if code else "市场"
+    prompt = f"""以下是{scope}相关新闻与市场情绪汇总：
 
 【新闻列表】
 {news_block}

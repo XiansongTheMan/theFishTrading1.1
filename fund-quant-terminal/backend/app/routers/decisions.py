@@ -22,8 +22,9 @@ COLLECTION = "decision_logs"
 
 
 class GrokDecisionRequest(BaseModel):
-    fund_code: str = Field(..., description="基金代码")
+    fund_code: str = Field("", description="基金代码，空则为全局/市场")
     include_news: bool = Field(True, description="是否在响应中包含新闻摘要列表")
+    news_links: List[str] | None = Field(None, description="指定新闻 link 列表，优先于 fund_code 查询")
 
 
 def _serialize_doc(doc: dict) -> dict:
@@ -38,12 +39,13 @@ async def decisions_grok_decision(
     body: GrokDecisionRequest,
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict:
-    """生成 Grok 决策提示词：基于基金最近 72 小时新闻与情绪分析，返回可直接复制的完整提示 + 新闻摘要"""
+    """生成 Grok 决策提示词：基于基金或指定新闻，返回可直接复制的完整提示 + 新闻摘要"""
     try:
         prompt, news_summary = await generate_grok_prompt(
-            body.fund_code,
+            body.fund_code or "",
             db,
             include_news_list=body.include_news,
+            custom_news_links=body.news_links,
         )
         data = {"prompt": prompt}
         if body.include_news:
