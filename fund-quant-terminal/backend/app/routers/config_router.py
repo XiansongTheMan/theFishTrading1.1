@@ -177,3 +177,47 @@ async def test_token(
     except Exception as e:
         logger.exception("test_token error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# 定时新闻采集关注的基金列表（APScheduler 每 4 小时抓取）
+WATCHED_FUNDS_ID = "watched_funds"
+
+
+class WatchedFundsUpdateRequest(BaseModel):
+    fund_codes: list[str] = Field(default_factory=list, description="基金代码列表，如 ['021896','000001']")
+
+
+@router.get("/config/watched-funds")
+async def get_watched_funds(db: AsyncIOMotorDatabase = Depends(get_database)):
+    """获取定时新闻采集关注的基金列表"""
+    try:
+        doc = await db["config"].find_one({"_id": WATCHED_FUNDS_ID})
+        codes = list(doc.get("fund_codes", [])) if doc else []
+        return api_success(data={"fund_codes": codes})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("get_watched_funds error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/config/watched-funds")
+async def update_watched_funds(
+    body: WatchedFundsUpdateRequest,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """更新定时新闻采集关注的基金列表"""
+    try:
+        codes = [str(c).strip().split(".")[0].zfill(6) for c in (body.fund_codes or []) if c]
+        codes = list(dict.fromkeys(codes))
+        await db["config"].update_one(
+            {"_id": WATCHED_FUNDS_ID},
+            {"$set": {"fund_codes": codes, "updated_at": datetime.utcnow()}},
+            upsert=True,
+        )
+        return api_success(data={"fund_codes": codes}, message="已保存")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("update_watched_funds error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))

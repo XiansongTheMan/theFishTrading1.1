@@ -24,6 +24,7 @@ import {
 import * as echarts from "echarts";
 import { logDecision, getDecisionList, deleteDecision, type DecisionLog } from "../api/decisions";
 import { getAssetsSummary, updateAssets } from "../api/assets";
+import { fetchGrokDecision, type GrokDecisionNewsItem } from "../api/grok";
 import { useAppStore } from "../stores/app";
 import { useChartResize } from "../composables/useChartResize";
 import {
@@ -222,6 +223,59 @@ async function handleDelete(id: string) {
 }
 
 const exportLoading = ref(false);
+
+// 一键收集资讯并生成 Grok 决策
+const grokDecisionModalVisible = ref(false);
+const grokDecisionLoading = ref(false);
+const grokDecisionFundCode = ref("");
+const grokDecisionPrompt = ref("");
+const grokDecisionNews = ref<GrokDecisionNewsItem[]>([]);
+async function openGrokDecisionModal() {
+  grokDecisionModalVisible.value = true;
+  grokDecisionFundCode.value = form.value.fund_code?.trim() || "";
+  grokDecisionPrompt.value = "";
+  grokDecisionNews.value = [];
+  // 每次打开都清空，确保“刷新”语义
+}
+async function fetchGrokDecisionData() {
+  const fc = grokDecisionFundCode.value.trim();
+  if (!fc) {
+    ElMessage.warning("请填写基金代码");
+    return;
+  }
+  grokDecisionLoading.value = true;
+  try {
+    const res = (await fetchGrokDecision(fc, true)) as { data?: { prompt?: string; news_summary?: GrokDecisionNewsItem[] } };
+    grokDecisionPrompt.value = res?.data?.prompt ?? "";
+    grokDecisionNews.value = res?.data?.news_summary ?? [];
+    ElMessage.success("已生成决策提示词");
+  } catch {
+    grokDecisionPrompt.value = "";
+    grokDecisionNews.value = [];
+  } finally {
+    grokDecisionLoading.value = false;
+  }
+}
+function copyGrokPromptToClipboard() {
+  const text = grokDecisionPrompt.value;
+  if (!text) {
+    ElMessage.warning("暂无提示词可复制");
+    return;
+  }
+  navigator.clipboard.writeText(text).then(
+    () => ElMessage.success("已复制到剪贴板，可粘贴给 Grok"),
+    () => ElMessage.error("复制失败")
+  );
+}
+function fillGrokPromptToForm() {
+  if (grokDecisionPrompt.value) {
+    form.value.grok_prompt = grokDecisionPrompt.value;
+    form.value.fund_code = grokDecisionFundCode.value.trim();
+    grokDecisionModalVisible.value = false;
+    ElMessage.success("已填入决策表单");
+    dialogVisible.value = true;
+  }
+}
 async function handleExportExcel() {
   exportLoading.value = true;
   try {
@@ -268,6 +322,7 @@ onUnmounted(() => {
     <ElCard shadow="never">
       <div class="action-row">
         <ElButton type="primary" @click="openAdd">新增决策</ElButton>
+        <ElButton type="success" @click="openGrokDecisionModal">一键收集资讯并生成Grok决策</ElButton>
         <ElButton @click="copyLatestToClipboard">复制最新记录</ElButton>
         <ElButton :loading="exportLoading" @click="handleExportExcel">导出 Excel</ElButton>
         <ElButton :loading="exportLoading" @click="handleExportPdf">导出 PDF</ElButton>
@@ -313,6 +368,46 @@ onUnmounted(() => {
       <template #header>盈亏分布</template>
       <div ref="chartRef" class="chart"></div>
     </ElCard>
+
+    <ElDialog
+      v-model="grokDecisionModalVisible"
+      title="一键收集资讯并生成Grok决策"
+      width="680px"
+      class="grok-decision-modal"
+      @opened="grokDecisionPrompt = ''; grokDecisionNews = []"
+    >
+      <ElForm label-width="90px" label-position="top">
+        <ElFormItem label="基金代码">
+          <div class="grok-fund-row">
+            <ElInput v-model="grokDecisionFundCode" placeholder="如 021896" style="width: 160px" />
+            <ElButton type="primary" :loading="grokDecisionLoading" @click="fetchGrokDecisionData">生成</ElButton>
+          </div>
+        </ElFormItem>
+      </ElForm>
+      <div v-if="grokDecisionNews.length > 0" class="grok-news-section">
+        <h4>相关资讯</h4>
+        <div class="grok-news-cards">
+          <div v-for="(item, i) in grokDecisionNews" :key="i" class="grok-news-card">
+            <a v-if="item.link" :href="item.link" target="_blank" rel="noopener" class="news-title">{{ item.title || "(无标题)" }}</a>
+            <span v-else class="news-title">{{ item.title || "(无标题)" }}</span>
+            <p v-if="item.content_summary" class="news-summary">{{ item.content_summary }}</p>
+            <span class="news-meta">{{ item.pub_date }} · {{ item.source || "RSS" }}</span>
+          </div>
+        </div>
+      </div>
+      <div v-if="grokDecisionPrompt" class="grok-prompt-section">
+        <div class="grok-prompt-header">
+          <h4>完整 Grok 提示词</h4>
+          <ElButton type="primary" size="small" @click="copyGrokPromptToClipboard">复制提示词</ElButton>
+        </div>
+        <pre class="grok-prompt-text">{{ grokDecisionPrompt }}</pre>
+        <ElButton type="success" plain size="small" @click="fillGrokPromptToForm">填入到决策表单</ElButton>
+      </div>
+      <template #footer>
+        <ElButton @click="grokDecisionModalVisible = false">关闭</ElButton>
+        <ElButton type="primary" :loading="grokDecisionLoading" @click="fetchGrokDecisionData">重新生成</ElButton>
+      </template>
+    </ElDialog>
 
     <ElDialog v-model="dialogVisible" title="新增决策" width="520">
       <ElForm :model="form" label-width="110px">
@@ -391,5 +486,80 @@ onUnmounted(() => {
   .chart {
     height: 180px;
   }
+}
+
+.grok-fund-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.grok-news-section {
+  margin-top: 16px;
+}
+.grok-news-section h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #606266;
+}
+.grok-news-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.grok-news-card {
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fafafa;
+  font-size: 13px;
+}
+.grok-news-card .news-title {
+  font-weight: 500;
+  color: #409eff;
+  text-decoration: none;
+  display: block;
+  margin-bottom: 4px;
+}
+.grok-news-card .news-title:hover {
+  text-decoration: underline;
+}
+.grok-news-card .news-summary {
+  margin: 0 0 6px;
+  color: #606266;
+  line-height: 1.4;
+  font-size: 12px;
+}
+.grok-news-card .news-meta {
+  font-size: 11px;
+  color: #909399;
+}
+.grok-prompt-section {
+  margin-top: 16px;
+}
+.grok-prompt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.grok-prompt-header h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #606266;
+}
+.grok-prompt-text {
+  padding: 12px;
+  background: #f5f7fa;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0 0 10px;
 }
 </style>

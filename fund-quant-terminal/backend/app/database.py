@@ -71,6 +71,14 @@ async def ensure_indexes() -> None:
     except Exception as e:
         logger.warning("holding_transactions 索引: %s", e)
 
+    try:
+        await db.news_raw.create_index("pub_date", name="ix_pub_date")
+        await db.news_raw.create_index([("pub_date", -1)], name="ix_pub_date_desc")
+        await db.news_raw.create_index("link", unique=True, name="ix_link_unique")
+        await db.news_raw.create_index("fund_code", name="ix_fund_code")
+        logger.info("news_raw 索引创建完成")
+    except Exception as e:
+        logger.warning("news_raw 索引: %s", e)
 
 # 别名，与 lifespan 中 create_indexes 命名一致
 create_indexes = ensure_indexes

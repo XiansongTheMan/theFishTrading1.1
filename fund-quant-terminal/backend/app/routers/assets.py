@@ -133,10 +133,12 @@ async def assets_sync(db: AsyncIOMotorDatabase = Depends(get_database)) -> dict:
         updated = 0
         failed = 0
         for d in docs:
-            sym = (d.get("symbol") or "").strip().split(".")[0]
+            sym_raw = (d.get("symbol") or "").strip().split(".")[0]
             asset_type = (d.get("asset_type") or "fund").lower()
-            if not sym:
+            if not sym_raw:
                 continue
+            # 基金代码补齐 6 位，与东方财富接口一致
+            sym = sym_raw.zfill(6) if asset_type == "fund" else sym_raw
             try:
                 updates: Dict[str, Any] = {"updated_at": datetime.utcnow()}
                 if asset_type == "fund":
@@ -150,7 +152,10 @@ async def assets_sync(db: AsyncIOMotorDatabase = Depends(get_database)) -> dict:
                             if n is not None:
                                 updates["current_price"] = float(n)
                                 break
-                    await _store_holding_history(db, sym, "fund", nav_list)
+                    sector = await data_service.get_fund_sector(sym)
+                    if sector:
+                        updates["sector"] = sector
+                    await _store_holding_history(db, sym, "fund", nav_list)  # sym 已补齐 6 位
                 else:
                     name = await data_service.get_stock_name(sym)
                     if name:
@@ -161,6 +166,9 @@ async def assets_sync(db: AsyncIOMotorDatabase = Depends(get_database)) -> dict:
                         price = last_rec.get("收盘") or last_rec.get("close")
                         if price is not None:
                             updates["current_price"] = float(price)
+                    sector = await data_service.get_stock_sector(sym)
+                    if sector:
+                        updates["sector"] = sector
                     await _store_holding_history(db, sym, "stock", daily_list)
 
                 if len(updates) > 1:
@@ -193,8 +201,9 @@ async def get_holding_history(
         at = (asset_type or "fund").lower()
         if not sym:
             raise HTTPException(status_code=400, detail="标的代码不能为空")
+        sym_key = sym.zfill(6) if at == "fund" else sym
         doc = await db[HISTORY_COLLECTION].find_one(
-            {"symbol": sym, "asset_type": at}
+            {"symbol": sym_key, "asset_type": at}
         )
         if not doc or not doc.get("data"):
             return api_success(data={"data": [], "symbol": sym, "source": "empty"})
@@ -251,6 +260,8 @@ async def get_holding_summary(
         if not sym:
             raise HTTPException(status_code=400, detail="标的代码不能为空")
         asset = await db[COLLECTION].find_one({"symbol": sym, "asset_type": at})
+        if not asset and at == "fund":
+            asset = await db[COLLECTION].find_one({"symbol": sym.zfill(6), "asset_type": at})
         quantity = 0.0
         cost_price = 0.0
         current_price = 0.0
@@ -261,37 +272,48 @@ async def get_holding_summary(
             name = asset.get("name") or sym
         else:
             cost_price = 0.0
-        # 始终尝试从接口拉取最新行情价，失败时不使用缓存价，返回 None 供前端显示「未获取」
+        # 优先使用 sync 时写入的 current_price，避免每次进入详情页都调用慢速 akshare 接口
         current_price: Optional[float] = None
         price_fetched = False
-        try:
-            if at == "fund":
-                nav_list = await data_service.get_fund_nav(sym)
-                if nav_list:
-                    for r in reversed(nav_list):
-                        p = r.get("nav") or r.get("单位净值")
+        if asset and (p := asset.get("current_price")) is not None:
+            try:
+                current_price = float(p)
+                price_fetched = True
+            except (TypeError, ValueError):
+                pass
+        if current_price is None:
+            try:
+                if at == "fund":
+                    nav_list = await data_service.get_fund_nav(sym)
+                    if nav_list:
+                        for r in reversed(nav_list):
+                            p = r.get("nav") or r.get("单位净值")
+                            if p is not None:
+                                current_price = float(p)
+                                price_fetched = True
+                                break
+                else:
+                    daily_list = await data_service.get_stock_daily(symbol=sym)
+                    if daily_list:
+                        last_rec = daily_list[-1]
+                        p = last_rec.get("收盘") or last_rec.get("close")
                         if p is not None:
                             current_price = float(p)
                             price_fetched = True
-                            break
-            else:
-                daily_list = await data_service.get_stock_daily(symbol=sym)
-                if daily_list:
-                    last_rec = daily_list[-1]
-                    p = last_rec.get("收盘") or last_rec.get("close")
-                    if p is not None:
-                        current_price = float(p)
-                        price_fetched = True
-        except Exception as e:
-            logger.debug("get_holding_summary 拉取实时价失败 %s %s: %s", sym, at, e)
+            except Exception as e:
+                logger.debug("get_holding_summary 拉取实时价失败 %s %s: %s", sym, at, e)
+        # 优先使用 sync 时写入的 sector，避免进入详情页时调用 akshare
         sector: Optional[str] = None
-        try:
-            if at == "fund":
-                sector = await data_service.get_fund_sector(sym)
-            else:
-                sector = await data_service.get_stock_sector(sym)
-        except Exception as e:
-            logger.debug("get_holding_summary 拉取板块失败 %s %s: %s", sym, at, e)
+        if asset and (s := asset.get("sector")) is not None and str(s).strip():
+            sector = str(s).strip()
+        if sector is None:
+            try:
+                if at == "fund":
+                    sector = await data_service.get_fund_sector(sym)
+                else:
+                    sector = await data_service.get_stock_sector(sym)
+            except Exception as e:
+                logger.debug("get_holding_summary 拉取板块失败 %s %s: %s", sym, at, e)
         invested = round(quantity * cost_price, 2)
         market_value: Optional[float] = round(quantity * current_price, 2) if current_price is not None else None
         profit: Optional[float] = round(market_value - invested, 2) if market_value is not None else None

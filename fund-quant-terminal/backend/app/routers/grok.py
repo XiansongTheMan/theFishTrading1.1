@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.database import get_database
 from app.schemas.response import api_success
+from app.services.grok_decision import generate_grok_prompt
 from app.utils.logger import logger
 
 router = APIRouter()
@@ -23,6 +24,13 @@ class GrokPromptSave(BaseModel):
     """保存 Grok 提示词请求"""
 
     content: str = Field(..., description="提示词内容")
+
+
+class GrokDecisionRequest(BaseModel):
+    """Grok 决策请求"""
+
+    fund_code: str = Field(..., description="基金代码")
+    include_news: bool = Field(True, description="是否在响应中包含新闻摘要列表")
 
 
 @router.get("/grok-prompt")
@@ -108,4 +116,29 @@ async def get_grok_prompt_history(
         raise
     except Exception as e:
         logger.exception("get_grok_prompt_history error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/grok-decision")
+async def post_grok_decision(
+    body: GrokDecisionRequest,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    生成 Grok 决策提示词：基于基金最近 72 小时新闻与情绪分析，输出可直接复制的完整提示
+    """
+    try:
+        prompt, news_summary = await generate_grok_prompt(
+            body.fund_code,
+            db,
+            include_news_list=body.include_news,
+        )
+        data = {"prompt": prompt}
+        if body.include_news:
+            data["news_summary"] = news_summary
+        return api_success(data=data, message="已生成决策提示词")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("post_grok_decision error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

@@ -26,3 +26,17 @@ export const getGrokPromptHistory = () =>
   request.get<
     { data: { id: string; version: number; updated_at: string }[] }
   >("/grok-prompt/history");
+
+export interface GrokDecisionNewsItem {
+  title: string;
+  link: string;
+  pub_date: string;
+  source: string;
+  content_summary: string;
+}
+
+export const fetchGrokDecision = (fundCode: string, includeNews = true) =>
+  request.post<{ data: { prompt: string; news_summary?: GrokDecisionNewsItem[] } }>(
+    "/grok-decision",
+    { fund_code: fundCode, include_news: includeNews }
+  );

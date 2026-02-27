@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # CORS 允许的源（逗号分隔）
     CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
+    # 新闻 RSS 源（逗号分隔，URL 中 {fund_code} 会替换为基金代码）
+    NEWS_FEED_URLS: str = "https://rsshub.app/finance/eastmoney/roll,https://rsshub.app/finance/eastmoney/fund/{fund_code},https://rsshub.app/finance/sina/roll"
+
     @property
     def cors_origins_list(self) -> List[str]:
         """解析 CORS 源列表"""

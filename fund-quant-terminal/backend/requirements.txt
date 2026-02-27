@@ -9,3 +9,5 @@ tenacity>=8.2.0
 tushare>=1.2.89
 pandas>=2.2.0
 numpy>=1.26.0
+feedparser>=6.0.10
+apscheduler>=3.10.0

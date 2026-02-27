@@ -133,44 +133,40 @@ async function loadData() {
   rawData.value = [];
   // 保留 summary/transactions 直到获取新数据，避免刷新时页面闪烁
   try {
-    let useCached = false;
-    try {
-      const cachedRes = (await getHoldingHistory(assetType.value, sym)) as {
-        data?: { data?: { date: string; value: number }[] };
-      };
-      const cached = cachedRes?.data?.data ?? [];
-      if (cached.length > 0) {
-        rawData.value = cached.map((d) => ({ date: d.date, value: d.value }));
-        useCached = true;
-      }
-    } catch {
-      /* 缓存失败则从 API 拉取 */
-    }
-    if (!useCached) {
-      if (isFund.value) {
-        const res = (await fetchData(sym, "nav")) as {
-          data?: { data?: Record<string, unknown>[] };
-        };
-        const raw = res?.data?.data ?? [];
-        rawData.value = raw.map((r: Record<string, unknown>) => ({
-          date: String(r.date ?? r["净值日期"] ?? ""),
-          value: Number(r.nav ?? r["单位净值"] ?? 0),
-        })).filter((d) => d.date && d.value > 0);
-      } else {
-        const res = (await getStockDaily(sym)) as {
-          data?: { data?: Record<string, unknown>[] };
-        };
-        const arr = res?.data?.data ?? [];
-        rawData.value = arr.map((r: Record<string, unknown>) => ({
-          date: String(r["日期"] ?? r.date ?? ""),
-          value: Number(r["收盘"] ?? r.close ?? 0),
-        })).filter((d) => d.date && d.value > 0);
-      }
-    }
-    const [summaryRes, txRes] = await Promise.all([
+    // 并行请求：历史、汇总、交易，减少串行等待
+    const [historyRes, summaryRes, txRes] = await Promise.all([
+      getHoldingHistory(assetType.value, sym),
       getHoldingSummary(assetType.value, sym),
       getHoldingTransactions(assetType.value, sym),
     ]);
+    const cached = (historyRes as { data?: { data?: { date: string; value: number }[] } })?.data?.data ?? [];
+    if (cached.length > 0) {
+      rawData.value = cached.map((d) => ({ date: d.date, value: d.value }));
+    } else {
+      try {
+        if (isFund.value) {
+          const res = (await fetchData(sym, "nav")) as {
+            data?: { data?: Record<string, unknown>[] };
+          };
+          const raw = res?.data?.data ?? [];
+          rawData.value = raw.map((r: Record<string, unknown>) => ({
+            date: String(r.date ?? r["净值日期"] ?? ""),
+            value: Number(r.nav ?? r["单位净值"] ?? 0),
+          })).filter((d) => d.date && d.value > 0);
+        } else {
+          const res = (await getStockDaily(sym)) as {
+            data?: { data?: Record<string, unknown>[] };
+          };
+          const arr = res?.data?.data ?? [];
+          rawData.value = arr.map((r: Record<string, unknown>) => ({
+            date: String(r["日期"] ?? r.date ?? ""),
+            value: Number(r["收盘"] ?? r.close ?? 0),
+          })).filter((d) => d.date && d.value > 0);
+        }
+      } catch {
+        /* 从 API 拉取失败则无图表数据 */
+      }
+    }
     const newSummary = (summaryRes as { data?: HoldingSummary })?.data ?? null;
     const newTx = (txRes as { data?: HoldingTransaction[] })?.data ?? [];
     summary.value = newSummary;

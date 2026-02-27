@@ -1,6 +1,7 @@
 # =====================================================
 # FastAPI 主应用入口
 # 配置 CORS、路由、生命周期（@asynccontextmanager）、全局异常处理、日志
+# APScheduler 定时新闻采集（每 4 小时）
 # =====================================================
 
 import asyncio
@@ -8,6 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,8 +18,38 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import close_database, get_database
 from app.utils.logger import logger
-from app.routers import assets, config_router, data, decisions, grok, mongo
+from app.routers import assets, config_router, data, decisions, grok, mongo, news
 from app.schemas.response import api_success
+
+WATCHED_FUNDS_CONFIG_ID = "watched_funds"
+_scheduler: AsyncIOScheduler | None = None
+
+
+async def _scheduled_news_fetch() -> None:
+    """定时任务：从 config 读取关注的基金，抓取 RSS 新闻并写入 news_raw"""
+    try:
+        db = await get_database()
+        doc = await db["config"].find_one({"_id": WATCHED_FUNDS_CONFIG_ID})
+        fund_codes = list(doc.get("fund_codes", [])) if doc else []
+        fund_codes = [str(c).strip().split(".")[0].zfill(6) for c in fund_codes if c]
+
+        from app.services.news_fetch import NewsFetchService
+        news_service = NewsFetchService()
+        total = 0
+
+        for fc in fund_codes:
+            try:
+                items = await news_service.fetch_and_save(db, fund_code=fc, days=3)
+                total += len(items)
+            except Exception as e:
+                logger.warning("定时新闻采集 单只基金 %s 失败: %s", fc, e)
+
+        general = await news_service.fetch_and_save(db, fund_code=None, days=3)
+        total += len(general)
+
+        logger.info("新闻采集完成，共%d条", total)
+    except Exception as e:
+        logger.exception("定时新闻采集失败: %s", e)
 
 
 def _get_grok_prompt_path() -> Path:
@@ -61,6 +93,12 @@ async def lifespan(app: FastAPI):
             logger.info("已从配置加载 Tushare Token")
 
         await _sync_grok_prompt_to_file()
+
+        global _scheduler
+        _scheduler = AsyncIOScheduler()
+        _scheduler.add_job(_scheduled_news_fetch, "interval", hours=4, id="news_fetch")
+        _scheduler.start()
+        logger.info("APScheduler 已启动，新闻采集每 4 小时执行")
     except Exception as e:
         logger.error("MongoDB 连接失败: %s", e)
         raise
@@ -68,6 +106,11 @@ async def lifespan(app: FastAPI):
     yield
 
     # ----- Shutdown -----
+    global _scheduler
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
+        _scheduler = None
+        logger.info("APScheduler 已关闭")
     await close_database()
     logger.info("Motor client closed")
 
@@ -128,6 +171,7 @@ app.include_router(decisions.router, prefix="/api/decisions", tags=["决策"])
 # 资产路由：/api/assets
 app.include_router(assets.router, prefix="/api/assets", tags=["资产"])
 app.include_router(mongo.router, prefix="/api/mongo", tags=["MongoDB"])
+app.include_router(news.router, prefix="/api/news", tags=["新闻"])
 app.include_router(grok.router, prefix="/api", tags=["Grok"])
 app.include_router(config_router.router, prefix="/api", tags=["配置"])
 

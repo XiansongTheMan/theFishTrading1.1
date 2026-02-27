@@ -8,15 +8,22 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel, Field
 
 from app.database import get_database
 from app.models.decision_log import DecisionLog, DecisionLogCreate
 from app.schemas.response import api_success
 from app.services.assets import update_assets
+from app.services.grok_decision import generate_grok_prompt
 from app.utils.logger import logger
 
 router = APIRouter()
 COLLECTION = "decision_logs"
+
+
+class GrokDecisionRequest(BaseModel):
+    fund_code: str = Field(..., description="基金代码")
+    include_news: bool = Field(True, description="是否在响应中包含新闻摘要列表")
 
 
 def _serialize_doc(doc: dict) -> dict:
@@ -24,6 +31,29 @@ def _serialize_doc(doc: dict) -> dict:
         doc["id"] = str(doc["_id"])
         doc.pop("_id", None)
     return doc
+
+
+@router.post("/grok-decision")
+async def decisions_grok_decision(
+    body: GrokDecisionRequest,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict:
+    """生成 Grok 决策提示词：基于基金最近 72 小时新闻与情绪分析，返回可直接复制的完整提示 + 新闻摘要"""
+    try:
+        prompt, news_summary = await generate_grok_prompt(
+            body.fund_code,
+            db,
+            include_news_list=body.include_news,
+        )
+        data = {"prompt": prompt}
+        if body.include_news:
+            data["news_summary"] = news_summary
+        return api_success(data=data, message="已生成决策提示词")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("decisions_grok_decision 异常: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/log")

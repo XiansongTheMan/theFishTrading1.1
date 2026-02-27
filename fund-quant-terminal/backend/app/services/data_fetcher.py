@@ -5,6 +5,7 @@
 # =====================================================
 
 import asyncio
+import re
 import time
 from datetime import datetime
 from functools import wraps
@@ -229,21 +230,59 @@ class DataFetcherService:
     async def get_fund_nav(self, fund_code: str) -> List[Dict[str, Any]]:
         """
         获取基金净值走势
-        使用 akshare fund_open_fund_info_em(indicator="单位净值走势")
+        主接口：akshare fund_open_fund_info_em(indicator="单位净值走势")
+        备用：fund_open_fund_daily_em（16:00-23:00 更新当日净值，当主接口未及时更新时补充）
         """
         @akshare_retry
         def _fetch() -> List[Dict[str, Any]]:
             import akshare as ak
 
-            code = fund_code.strip().split(".")[0]
+            code = fund_code.strip().split(".")[0].zfill(6)
             df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
             if df is None or df.empty:
-                return []
-            col_map = {"净值日期": "date", "单位净值": "nav", "日增长率": "daily_return"}
-            for old, new in col_map.items():
-                if old in df.columns:
-                    df = df.rename(columns={old: new})
-            return df.to_dict(orient="records")
+                records: List[Dict[str, Any]] = []
+                max_date = None
+            else:
+                col_map = {"净值日期": "date", "单位净值": "nav", "日增长率": "daily_return"}
+                for old, new in col_map.items():
+                    if old in df.columns:
+                        df = df.rename(columns={old: new})
+                records = df.to_dict(orient="records")
+                max_date = df["date"].max() if "date" in df.columns else None
+                if max_date is not None and hasattr(max_date, "date") and callable(getattr(max_date, "date")):
+                    max_date = max_date.date()
+
+            # 备用：fund_open_fund_daily_em（16:00-23:00 更新）有当日最新净值时补充
+            try:
+                daily_df = ak.fund_open_fund_daily_em()
+                if daily_df is not None and not daily_df.empty and "基金代码" in daily_df.columns:
+                    nav_cols = [c for c in daily_df.columns if isinstance(c, str) and c.endswith("-单位净值")]
+                    if nav_cols:
+                        latest_col = nav_cols[0]
+                        date_str = latest_col.replace("-单位净值", "").strip()
+                        if re.match(r"\d{4}-\d{2}-\d{2}", date_str):
+                            fund_row = daily_df[daily_df["基金代码"].astype(str).str.strip() == code]
+                            if not fund_row.empty:
+                                nav_val = fund_row[latest_col].iloc[0]
+                                try:
+                                    nav_float = float(nav_val)
+                                    if nav_float == nav_float:  # 非 NaN
+                                        new_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                                        if max_date is None or new_date > max_date:
+                                            daily_ret = None
+                                            if "日增长率" in daily_df.columns:
+                                                dr = fund_row["日增长率"].iloc[0]
+                                                try:
+                                                    daily_ret = float(dr) if dr == dr else None
+                                                except (TypeError, ValueError):
+                                                    pass
+                                            records.append({"date": new_date, "nav": nav_float, "daily_return": daily_ret})
+                                except (TypeError, ValueError):
+                                    pass
+            except Exception as e:
+                logger.debug("get_fund_nav daily fallback 跳过: %s", e)
+
+            return records
 
         try:
             return await _run_akshare(_fetch, "get_fund_nav")
