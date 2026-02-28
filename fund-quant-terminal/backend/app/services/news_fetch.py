@@ -236,9 +236,11 @@ class NewsFetchService:
         keyword: Optional[str] = None,
         page: int = 1,
         limit: int = 20,
+        sort: Optional[List[tuple]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """
         分页查询 news_raw，支持 keyword 全文搜索
+        sort: [(field, direction)] 如 [("pub_date", -1)]、[("sentiment", 1)]
         返回 (items, total_count)，items 已格式化（去除 _id，日期转字符串）
         """
         cutoff = datetime.utcnow() - timedelta(days=max(1, days))
@@ -261,9 +263,10 @@ class NewsFetchService:
 
         query = {"$and": conditions} if len(conditions) > 1 else conditions[0]
 
+        sort_spec = sort if sort and isinstance(sort, list) and len(sort) > 0 else [("pub_date", -1)]
         total = await db[NEWS_COLLECTION].count_documents(query)
         skip = max(0, (page - 1) * limit)
-        cursor = db[NEWS_COLLECTION].find(query).sort("pub_date", -1).skip(skip).limit(limit)
+        cursor = db[NEWS_COLLECTION].find(query).sort(sort_spec).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
 
         out = []

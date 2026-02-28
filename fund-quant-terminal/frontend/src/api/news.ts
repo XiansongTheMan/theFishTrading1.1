@@ -44,7 +44,7 @@ export const fetchNews = (params?: {
     timeout: 30000,
   });
 
-/** 新闻分页列表（供市场资讯页） */
+/** 排序格式：field,direction，如 pub_date,-1 或 sentiment,1 */
 export const getNewsList = (
   params?: {
     fund_code?: string;
@@ -52,6 +52,7 @@ export const getNewsList = (
     keyword?: string;
     page?: number;
     limit?: number;
+    sort?: string;
     refresh?: boolean;
   },
   config?: { skipLoading?: boolean }
@@ -63,6 +64,7 @@ export const getNewsList = (
       keyword: params?.keyword || undefined,
       page: params?.page ?? 1,
       limit: params?.limit ?? 20,
+      sort: params?.sort || undefined,
       refresh: params?.refresh ?? false,
     },
     timeout: 30000,

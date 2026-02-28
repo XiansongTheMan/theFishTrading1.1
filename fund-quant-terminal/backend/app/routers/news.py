@@ -65,6 +65,23 @@ async def _get_news_list(
     return result
 
 
+def _parse_sort(s: Optional[str]) -> list:
+    """解析 sort=field,direction，如 pub_date,-1 或 sentiment,1"""
+    if not s or not isinstance(s, str) or "," not in s:
+        return [("pub_date", -1)]
+    parts = s.strip().split(",", 1)
+    field = (parts[0] or "pub_date").strip()
+    if field not in ("pub_date", "sentiment", "created_at"):
+        field = "pub_date"
+    try:
+        direction = int(parts[1].strip()) if len(parts) > 1 else -1
+    except (ValueError, TypeError):
+        direction = -1
+    if direction not in (1, -1):
+        direction = -1
+    return [(field, direction)]
+
+
 @router.get("/list")
 async def news_list(
     fund_code: Optional[str] = Query(None, description="基金代码，可选"),
@@ -72,6 +89,7 @@ async def news_list(
     keyword: Optional[str] = Query(None, description="关键词搜索（标题、摘要）"),
     page: int = Query(1, ge=1, description="页码"),
     limit: int = Query(20, ge=1, le=100, description="每页条数"),
+    sort: Optional[str] = Query(None, description="排序，如 pub_date,-1 或 sentiment,1"),
     refresh: bool = Query(False, description="是否从 RSS 重新抓取后再查"),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict:
@@ -90,6 +108,7 @@ async def news_list(
             keyword=keyword,
             page=page,
             limit=limit,
+            sort=_parse_sort(sort),
         )
 
         for d in items:
