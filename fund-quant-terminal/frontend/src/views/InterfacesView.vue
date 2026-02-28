@@ -34,7 +34,7 @@ const interfaces = [
     url: "mongodb://localhost:27017",
     method: "-",
     type: "数据库",
-    desc: "本地数据库，存储决策日志、资产、持仓、新闻缓存、配置、Grok 角色设定等",
+    desc: "本地数据库，存储决策日志、资产、持仓、新闻缓存、配置、Agent 角色设定等",
   },
 ];
 </script>

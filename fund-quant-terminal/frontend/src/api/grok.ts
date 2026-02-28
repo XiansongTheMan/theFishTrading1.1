@@ -1,8 +1,46 @@
 // =====================================================
-// Grok 角色提示词 API
+// Grok / Agent 角色提示词 API
 // =====================================================
 
 import { request } from "./request";
+
+/** Agent 角色模板（grok / qwen 多模板） */
+export interface AgentTemplateItem {
+  id: string;
+  agent: string;
+  name: string;
+  content: string;
+  updated_at: string;
+  is_selected: boolean;
+}
+
+export const listAgentTemplates = (agent: string) =>
+  request.get<{ data: { items: AgentTemplateItem[]; selected_id: string; primary_ai_agent: string } }>(
+    "/agent-prompts",
+    { params: { agent } }
+  );
+
+export const getPrimaryAgent = () =>
+  request.get<{ data: { primary_ai_agent: string } }>("/agent-prompts/primary");
+
+export const createAgentTemplate = (params: { agent: string; name: string; content: string }) =>
+  request.post<{ data: { id: string; name: string; updated_at: string } }>("/agent-prompts", params);
+
+export const updateAgentTemplate = (templateId: string, params: { name?: string; content?: string }) =>
+  request.put("/agent-prompts/" + templateId, params);
+
+export const deleteAgentTemplate = (templateId: string) =>
+  request.delete("/agent-prompts/" + templateId);
+
+export const selectAgentTemplate = (templateId: string) =>
+  request.post("/agent-prompts/" + templateId + "/select");
+
+/** 测试 Agent 连接：输入内容，返回 Agent 回复，不保存 */
+export const agentChatTest = (agent: string, content: string) =>
+  request.post<{ data: { ok: boolean; content: string } }>("/agent-prompts-test", {
+    agent,
+    content,
+  });
 
 export interface GrokPromptDoc {
   id?: string;

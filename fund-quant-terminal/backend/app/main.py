@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import close_database, get_database
 from app.utils.logger import logger
-from app.routers import assets, config_router, data, decisions, grok, mongo
+from app.routers import agent_prompts, assets, config_router, data, decisions, grok, mongo
 from app.routers.news import router as news_router
 from app.schemas.response import api_success
 
@@ -58,17 +58,33 @@ def _get_grok_prompt_path() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent / "GROK_ROLE_PROMPT.md"
 
 
-async def _sync_grok_prompt_to_file():
-    """从数据库读取最新 Grok 角色设定，覆盖写入 GROK_ROLE_PROMPT.md"""
+async def _sync_agent_role_to_file():
+    """从数据库读取主要 Agent 的选中角色设定，覆盖写入 GROK_ROLE_PROMPT.md"""
     try:
+        from bson import ObjectId
         db = await get_database()
-        doc = await db["grok_prompts"].find_one({}, sort=[("version", -1)])
-        if not doc or not doc.get("content"):
-            logger.info("数据库中暂无 Grok 角色设定，跳过 GROK_ROLE_PROMPT.md 同步")
+        # 优先使用 agent_role_templates（按 primary_ai_agent + 选中模板）
+        tokens_doc = await db["config"].find_one({"_id": "tokens"}) or {}
+        primary = (tokens_doc.get("primary_ai_agent") or "grok").lower()
+        config_doc = await db["config"].find_one({"_id": "agent_role_config"}) or {}
+        selected_key = f"selected_{primary}_id"
+        tid = config_doc.get(selected_key)
+        content = ""
+        if tid:
+            doc = await db["agent_role_templates"].find_one({"_id": ObjectId(tid)})
+            if doc:
+                content = (doc.get("content") or "").strip()
+        # 若新结构无数据，回退到旧 grok_prompts
+        if not content:
+            old = await db["grok_prompts"].find_one({}, sort=[("version", -1)])
+            if old and old.get("content"):
+                content = old["content"]
+        if not content:
+            logger.info("数据库中暂无 Agent 角色设定，跳过 GROK_ROLE_PROMPT.md 同步")
             return
         path = _get_grok_prompt_path()
-        await asyncio.to_thread(path.write_text, doc["content"], encoding="utf-8")
-        logger.info("已从数据库同步 Grok 角色设定至 %s (v%s)", path, doc.get("version", "?"))
+        await asyncio.to_thread(path.write_text, content, encoding="utf-8")
+        logger.info("已从数据库同步 %s 角色设定至 %s", primary, path)
     except Exception as e:
         logger.warning("同步 GROK_ROLE_PROMPT.md 失败: %s", e)
 
@@ -89,12 +105,19 @@ async def lifespan(app: FastAPI):
         logger.info("Database indexes created successfully")
 
         doc = await db["config"].find_one({"_id": "tokens"})
-        if doc and doc.get("tokens", {}).get("tushare"):
+        if doc:
+            from app.routers.config_router import _normalize_tushare_list, PRIMARY_DATA_SOURCE_KEY, DEFAULT_DATA_SOURCE
             from app.routers.data import data_service
-            data_service.update_tushare_token(doc["tokens"]["tushare"])
-            logger.info("已从配置加载 Tushare Token")
+            tushare_list = _normalize_tushare_list(doc)
+            if tushare_list and hasattr(data_service, "update_tushare_tokens"):
+                data_service.update_tushare_tokens(tushare_list)
+                logger.info("已从配置加载 Tushare Token，共 %d 个", len(tushare_list))
+            primary = (doc.get(PRIMARY_DATA_SOURCE_KEY) or DEFAULT_DATA_SOURCE).lower()
+            if primary in ("akshare", "tushare") and hasattr(data_service, "set_primary_data_source"):
+                data_service.set_primary_data_source(primary)
+                logger.info("主要数据源: %s", primary)
 
-        await _sync_grok_prompt_to_file()
+        await _sync_agent_role_to_file()
 
         _scheduler = AsyncIOScheduler()
         _scheduler.add_job(_scheduled_news_fetch, "interval", hours=4, id="news_fetch")
@@ -178,6 +201,7 @@ app.include_router(mongo.router, prefix="/api/mongo", tags=["MongoDB"])
 app.include_router(news_router, prefix="/api/news", tags=["news"])
 app.include_router(grok.router, prefix="/api", tags=["Grok"])
 app.include_router(config_router.router, prefix="/api", tags=["配置"])
+app.include_router(agent_prompts.router, prefix="/api", tags=["Agent 角色设定"])
 
 # 兼容旧版 v1 路径
 app.include_router(data.router, prefix="/api/v1/data", tags=["数据-v1"])

@@ -50,6 +50,13 @@ async def ensure_indexes() -> None:
         logger.warning("grok_prompts 索引创建: %s", e)
 
     try:
+        await db.agent_role_templates.create_index("agent", name="ix_agent")
+        await db.agent_role_templates.create_index([("agent", 1), ("updated_at", -1)], name="ix_agent_updated")
+        logger.info("agent_role_templates 索引创建完成")
+    except Exception as e:
+        logger.warning("agent_role_templates 索引创建: %s", e)
+
+    try:
         # 资产：按 symbol、asset_type 查询
         await db.assets.create_index("symbol", name="ix_symbol")
         await db.assets.create_index("asset_type", name="ix_asset_type")

@@ -39,7 +39,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: "/news",
     name: "News",
-    component: () => import("@/views/NewsView.vue"),
+    component: () => import("../views/NewsView.vue"),
     meta: { title: "市场资讯", icon: "News" },
   },
   {
@@ -74,9 +74,9 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: "/grok-prompt",
-    name: "GrokPrompt",
+    name: "AgentPrompt",
     component: () => import("../views/GrokPrompt.vue"),
-    meta: { title: "Grok AI 角色设定" },
+    meta: { title: "Agent 角色设定" },
   },
 ];
 

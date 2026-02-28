@@ -2,7 +2,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import MarkdownIt from "markdown-it";
-import axios from "axios";
 import {
   ElCard,
   ElInput,
@@ -13,14 +12,13 @@ import {
   ElEmpty,
   ElMessageBox,
 } from "element-plus";
-import { Delete } from "@element-plus/icons-vue";
+import { Plus, Delete } from "@element-plus/icons-vue";
 import {
   listAgentTemplates,
   createAgentTemplate,
   updateAgentTemplate,
   deleteAgentTemplate,
   selectAgentTemplate,
-  agentChatTest,
   type AgentTemplateItem,
 } from "../api/grok";
 
@@ -30,11 +28,9 @@ const saving = ref(false);
 const templates = ref<AgentTemplateItem[]>([]);
 const selectedId = ref("");
 const primaryAiAgent = ref<"grok" | "qwen">("grok");
+
 const templateName = ref("");
 const promptContent = ref("");
-const testInput = ref("");
-const testOutput = ref("");
-const testLoading = ref(false);
 
 const currentTemplate = computed(() =>
   templates.value.find((t) => t.id === selectedId.value)
@@ -55,13 +51,10 @@ async function load(ag?: "grok" | "qwen") {
     };
     templates.value = res?.data?.items ?? [];
     selectedId.value = res?.data?.selected_id ?? "";
-    const primary = (res?.data?.primary_ai_agent || "grok") === "qwen" ? "qwen" : "grok";
-    primaryAiAgent.value = primary;
-    if (!ag) {
-      agent.value = primary;
-      if (primary !== a) return load(primary);
+    primaryAiAgent.value = (res?.data?.primary_ai_agent || "grok") === "qwen" ? "qwen" : "grok";
+    if (!ag && templates.value.length > 0 && !selectedId.value) {
+      selectedId.value = templates.value[0].id;
     }
-    if (templates.value.length > 0 && !selectedId.value) selectedId.value = templates.value[0].id;
     syncContentFromSelected();
   } catch {
     templates.value = [];
@@ -74,8 +67,13 @@ async function load(ag?: "grok" | "qwen") {
 
 function syncContentFromSelected() {
   const t = currentTemplate.value;
-  templateName.value = t?.name ?? "";
-  promptContent.value = t?.content ?? "";
+  if (t) {
+    templateName.value = t.name;
+    promptContent.value = t.content;
+  } else {
+    templateName.value = "";
+    promptContent.value = "";
+  }
 }
 
 watch(selectedId, () => syncContentFromSelected());
@@ -115,7 +113,10 @@ async function saveCurrent() {
   const name = (templateName.value || "未命名").trim() || "未命名";
   saving.value = true;
   try {
-    await updateAgentTemplate(selectedId.value, { name, content: promptContent.value });
+    await updateAgentTemplate(selectedId.value, {
+      name,
+      content: promptContent.value,
+    });
     ElMessage.success("已更新");
     await load();
     syncContentFromSelected();
@@ -157,41 +158,9 @@ async function doDelete(id: string) {
   }
 }
 
-function getFullErrorMessage(err: unknown): string {
-  if (axios.isAxiosError(err)) {
-    const data = err.response?.data as { detail?: string | unknown; message?: string } | undefined;
-    if (data?.detail) return typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
-    if (data?.message) return data.message;
-    if (err.response?.status) return `HTTP ${err.response.status}: ${err.message || "请求失败"}`;
-    if (err.code === "ECONNABORTED") return "请求超时（15 秒）";
-    if (err.message) return err.message;
-  }
-  if (err instanceof Error && err.message) return err.message;
-  return String(err) || "请求失败";
-}
-
-async function runTest() {
-  const content = (testInput.value || "").trim() || "你好";
-  testLoading.value = true;
-  testOutput.value = "";
-  try {
-    const res = (await agentChatTest(agent.value, content)) as {
-      data?: { ok?: boolean; content?: string };
-    };
-    const ok = res?.data?.ok ?? false;
-    testOutput.value = res?.data?.content ?? (ok ? "" : "无返回");
-    if (!ok && testOutput.value) ElMessage.warning(testOutput.value);
-    else if (ok) ElMessage.success("测试成功");
-  } catch (e) {
-    const fullMsg = getFullErrorMessage(e);
-    testOutput.value = `请求失败\n\n${fullMsg}`;
-    ElMessage.error("测试失败");
-  } finally {
-    testLoading.value = false;
-  }
-}
-
-onMounted(() => load());
+onMounted(() => {
+  load();
+});
 </script>
 
 <template>
@@ -278,29 +247,6 @@ onMounted(() => load());
         </div>
       </template>
     </ElCard>
-
-    <ElCard shadow="never" class="test-card">
-      <template #header>连接测试</template>
-      <p class="test-tip">输入内容发送给当前选择的 Agent，测试连接与回复。不保存到数据库。</p>
-      <ElInput
-        v-model="testInput"
-        type="textarea"
-        :rows="3"
-        placeholder="输入测试内容，如：你好，请简单介绍一下你自己"
-      />
-      <ElButton
-        type="primary"
-        :loading="testLoading"
-        @click="runTest"
-        class="test-btn"
-      >
-        发送测试
-      </ElButton>
-      <div v-if="testOutput" class="test-output">
-        <div class="output-label">Agent 回复：</div>
-        <div class="output-content">{{ testOutput }}</div>
-      </div>
-    </ElCard>
   </div>
 </template>
 
@@ -314,114 +260,21 @@ onMounted(() => load());
 .name-input { max-width: 280px; }
 .name-row { margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 .name-row .label { font-size: 0.95rem; }
-
-.preview-section {
-  margin-top: 16px;
-  padding: 12px;
-  background: var(--el-fill-color-light);
-  border-radius: 6px;
-  min-height: 80px;
+.preview-section { margin-top: 16px; padding: 12px; background: var(--el-fill-color-light); border-radius: 6px; min-height: 80px; }
+.preview-label { font-size: 0.9rem; color: var(--el-text-color-secondary); margin-bottom: 8px; }
+.preview-area { margin: 0; padding: 8px 0; font-size: 0.9rem; line-height: 1.6; word-break: break-word; }
+.preview-area.markdown-body :deep(h1), .preview-area.markdown-body :deep(h2), .preview-area.markdown-body :deep(h3) {
+  margin-top: 1em; margin-bottom: 0.5em; font-weight: 600;
 }
-
-/* 深色模式：Element Plus 变量自动切换，或父级 .dark */
-.dark .preview-section {
-  background: var(--el-fill-color);
+.preview-area.markdown-body :deep(p) { margin: 0.5em 0; }
+.preview-area.markdown-body :deep(ul), .preview-area.markdown-body :deep(ol) {
+  margin: 0.5em 0; padding-left: 1.5em;
 }
-
-.preview-label {
-  font-size: 0.9rem;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 8px;
-}
-
-.preview-area {
-  margin: 0;
-  padding: 8px 0;
-  font-size: 0.9rem;
-  line-height: 1.6;
-  color: var(--el-text-color-primary);
-  word-break: break-word;
-}
-
-.preview-area.markdown-body :deep(h1),
-.preview-area.markdown-body :deep(h2),
-.preview-area.markdown-body :deep(h3) {
-  margin-top: 1em;
-  margin-bottom: 0.5em;
-  font-weight: 600;
-}
-
-.preview-area.markdown-body :deep(h1) { font-size: 1.4em; }
-.preview-area.markdown-body :deep(h2) { font-size: 1.2em; }
-.preview-area.markdown-body :deep(h3) { font-size: 1.05em; }
-
-.preview-area.markdown-body :deep(p) {
-  margin: 0.5em 0;
-}
-
-.preview-area.markdown-body :deep(ul),
-.preview-area.markdown-body :deep(ol) {
-  margin: 0.5em 0;
-  padding-left: 1.5em;
-}
-
 .preview-area.markdown-body :deep(code) {
-  padding: 0.15em 0.4em;
-  background: var(--el-fill-color);
-  border-radius: 4px;
-  font-size: 0.9em;
+  padding: 0.15em 0.4em; background: var(--el-fill-color); border-radius: 4px; font-size: 0.9em;
 }
-
 .preview-area.markdown-body :deep(pre) {
-  margin: 0.5em 0;
-  padding: 12px;
-  background: var(--el-fill-color);
-  border-radius: 6px;
-  overflow-x: auto;
+  margin: 0.5em 0; padding: 12px; background: var(--el-fill-color); border-radius: 6px; overflow-x: auto;
 }
-
-.preview-area.markdown-body :deep(pre code) {
-  padding: 0;
-  background: transparent;
-}
-
-.preview-area.markdown-body :deep(blockquote) {
-  margin: 0.5em 0;
-  padding-left: 1em;
-  border-left: 4px solid var(--el-border-color);
-  color: var(--el-text-color-secondary);
-}
-
-.preview-area.markdown-body :deep(table) {
-  margin: 0.5em 0;
-  border-collapse: collapse;
-  width: 100%;
-}
-
-.preview-area.markdown-body :deep(th),
-.preview-area.markdown-body :deep(td) {
-  padding: 6px 10px;
-  border: 1px solid var(--el-border-color);
-}
-
-.preview-area.markdown-body :deep(th) {
-  background: var(--el-fill-color);
-  font-weight: 600;
-}
-
-
 .actions { margin-top: 16px; display: flex; gap: 12px; }
-
-.test-card { margin-bottom: 20px; }
-.test-tip { font-size: 0.85rem; color: var(--el-text-color-secondary); margin: 0 0 12px; }
-.test-btn { margin-top: 12px; }
-.test-output { margin-top: 16px; padding: 12px; background: var(--el-fill-color-light); border-radius: 6px; }
-.output-label { font-size: 0.9rem; color: var(--el-text-color-secondary); margin-bottom: 8px; }
-.output-content { white-space: pre-wrap; word-break: break-word; font-size: 0.95rem; line-height: 1.5; }
-
-@media (max-width: 768px) {
-  .actions {
-    flex-wrap: wrap;
-  }
-}
 </style>

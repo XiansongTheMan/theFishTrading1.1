@@ -4,6 +4,7 @@
 # =====================================================
 
 import asyncio
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -258,7 +259,8 @@ class NewsFetchService:
 
         if keyword and keyword.strip():
             kw = keyword.strip()
-            regex = {"$regex": kw, "$options": "i"}
+            escaped = re.escape(kw)
+            regex = {"$regex": escaped, "$options": "i"}
             conditions.append({"$or": [{"title": regex}, {"content_summary": regex}]})
 
         query = {"$and": conditions} if len(conditions) > 1 else conditions[0]

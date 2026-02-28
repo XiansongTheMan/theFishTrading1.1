@@ -7,6 +7,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
+import { getDataSource } from "../api/config";
 import {
   ElContainer,
   ElAside,
@@ -19,6 +20,7 @@ import {
   ElTooltip,
   ElButton,
   ElDrawer,
+  ElTag,
 } from "element-plus";
 import { Sunny, Moon, Fold } from "@element-plus/icons-vue";
 import zhCn from "element-plus/dist/locale/zh-cn.mjs";
@@ -39,7 +41,7 @@ const topMenuItems = [
 const settingsSubItems = [
   { path: "/settings", name: "通用" },
   { path: "/interfaces", name: "接口" },
-  { path: "/grok-prompt", name: "Grok AI 角色设定" },
+  { path: "/grok-prompt", name: "Agent 角色设定" },
   { path: "/token", name: "Token" },
   { path: "/mongo-test", name: "MongoDB 连接测试" },
 ];
@@ -81,7 +83,33 @@ watch(
   { immediate: true }
 );
 
-watch(route, () => closeDrawer());
+watch(route, (r) => {
+  closeDrawer();
+  if (r.path !== "/token") fetchDataSource();
+});
+
+const dataSourceEffective = ref<string>("");
+async function fetchDataSource() {
+  try {
+    const res = (await getDataSource()) as { data?: { effective?: string } };
+    dataSourceEffective.value = res?.data?.effective || "tushare";
+  } catch {
+    dataSourceEffective.value = "tushare";
+  }
+}
+let _dataSourceTimer: ReturnType<typeof setInterval> | null = null;
+function onDataSourceUpdated() {
+  fetchDataSource();
+}
+onMounted(() => {
+  fetchDataSource();
+  _dataSourceTimer = setInterval(fetchDataSource, 30000);
+  window.addEventListener("data-source-updated", onDataSourceUpdated);
+});
+onUnmounted(() => {
+  if (_dataSourceTimer) clearInterval(_dataSourceTimer);
+  window.removeEventListener("data-source-updated", onDataSourceUpdated);
+});
 </script>
 
 <template>
@@ -128,6 +156,10 @@ watch(route, () => closeDrawer());
               </ElMenuItem>
             </ElSubMenu>
           </ElMenu>
+          <div class="sidebar-footer">
+            <span class="data-source-label">数据源：</span>
+            <ElTag size="small" type="info">{{ dataSourceEffective || "tushare" }}</ElTag>
+          </div>
         </ElAside>
         <ElDrawer
           v-model="drawerVisible"
@@ -192,9 +224,11 @@ watch(route, () => closeDrawer());
 }
 
 .sidebar {
+  position: relative;
   background: var(--el-bg-color);
   border-right: 1px solid var(--el-border-color);
   padding-top: 12px;
+  padding-bottom: 48px;
 }
 
 .logo {
@@ -206,6 +240,22 @@ watch(route, () => closeDrawer());
 
 .sidebar-menu {
   border-right: none;
+}
+
+.sidebar-footer {
+  position: absolute;
+  bottom: 12px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--el-text-color-secondary);
+}
+
+.data-source-label {
+  white-space: nowrap;
 }
 
 .main-content {
