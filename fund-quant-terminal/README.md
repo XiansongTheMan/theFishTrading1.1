@@ -64,6 +64,7 @@ npm run dev
 |------|------|
 | POST `/api/data/fetch` | 拉取基金净值(nav)、基金列表(list)、Tushare 信息(info) |
 | GET `/api/data/history` | 基金净值历史，支持日期和条数限制 |
+| POST `/api/wallstreetcn/test` | 华尔街见闻接口测试。**Body**: `{ type, code?, keyword?, limit?, channel?, cursor?, save_to_db? }`。`type` 可选: `lives`(实时快讯)、`articles`(文章)、`search`(个股搜索)、`quote`(行情快照，需 `code`)、`keyword`(关键词搜索，需 `keyword`)。返回原始 JSON 及解析字段(title、published_time、summary、url、sentiment)。供 Grok 决策参考的股市情报来源。 |
 
 ---
 
@@ -168,6 +169,7 @@ fund-quant-terminal/
 | POST | `/api/assets/update` | 更新资产 |
 | POST | `/api/data/fetch` | 拉取数据 |
 | GET | `/api/data/history` | 历史数据 |
+| POST | `/api/wallstreetcn/test` | 华尔街见闻接口测试（快讯/文章/搜索/行情/关键词，供 Grok 决策参考） |
 | GET | `/api/grok-prompt` | 获取 Grok 提示词（最新或指定版本） |
 | POST | `/api/grok-prompt` | 保存新版本 |
 | GET | `/api/grok-prompt/history` | 历史版本列表 |

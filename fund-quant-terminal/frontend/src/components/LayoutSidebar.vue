@@ -43,6 +43,7 @@ const settingsSubItems = [
   { path: "/interfaces", name: "接口" },
   { path: "/grok-prompt", name: "Agent 角色设定" },
   { path: "/token", name: "Token" },
+  { path: "/wallstreet-test", name: "华尔街见闻股市情报测试（供 Grok 参考）" },
   { path: "/mongo-test", name: "MongoDB 连接测试" },
 ];
 

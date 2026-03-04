@@ -5,6 +5,7 @@
 
 from app.models.asset import Asset, AssetCreate, AssetInDB
 from app.models.decision_log import DecisionLog, DecisionLogCreate
+from app.models.wallstreet import WallStreetResponse
 
 __all__ = [
     "Asset",
@@ -12,4 +13,5 @@ __all__ = [
     "AssetInDB",
     "DecisionLog",
     "DecisionLogCreate",
+    "WallStreetResponse",
 ]

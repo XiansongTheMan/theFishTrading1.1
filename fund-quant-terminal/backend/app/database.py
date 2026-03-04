@@ -38,6 +38,7 @@ async def ensure_indexes() -> None:
         await db.decision_logs.create_index("fund_code", name="ix_fund_code")
         await db.decision_logs.create_index("user_action", name="ix_user_action")
         await db.decision_logs.create_index([("timestamp", -1)], name="ix_timestamp_desc")
+        await db.decision_logs.create_index("source", name="ix_source")
         logger.info("decision_logs 索引创建完成")
     except Exception as e:
         logger.warning("decision_logs 索引创建: %s", e)

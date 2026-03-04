@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import close_database, get_database
 from app.utils.logger import logger
-from app.routers import agent_prompts, assets, config_router, data, decisions, grok, mongo
+from app.routers import agent_prompts, assets, config_router, data, decisions, grok, mongo, wallstreetcn
 from app.routers.news import router as news_router
 from app.schemas.response import api_success
 
@@ -202,6 +202,7 @@ app.include_router(news_router, prefix="/api/news", tags=["news"])
 app.include_router(grok.router, prefix="/api", tags=["Grok"])
 app.include_router(config_router.router, prefix="/api", tags=["配置"])
 app.include_router(agent_prompts.router, prefix="/api", tags=["Agent 角色设定"])
+app.include_router(wallstreetcn.router, prefix="/api/wallstreetcn", tags=["华尔街见闻"])
 
 # 兼容旧版 v1 路径
 app.include_router(data.router, prefix="/api/v1/data", tags=["数据-v1"])

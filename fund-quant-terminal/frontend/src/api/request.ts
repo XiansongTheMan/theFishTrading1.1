@@ -36,23 +36,24 @@ declare module "axios" {
 }
 
 function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;
     const msg = (err.response?.data as { message?: string })?.message;
     if (msg) return msg;
     if (status === 401) return "未授权，请重新登录";
+    if (status === 404) return "接口不存在 (404)，请确认后端已启动于 8000 端口";
     if (status === 500) return "服务器错误";
     if (err.code === "ECONNABORTED") return "请求超时，请稍后重试";
     if (err.message?.toLowerCase().includes("network")) return "网络请求失败，请检查连接";
   }
+  if (err instanceof Error) return err.message;
   if (typeof err === "object" && err && "response" in err) {
     const ax = err as { response?: { data?: { message?: string }; status?: number } };
     const msg = ax.response?.data?.message;
     if (msg) return msg;
     const status = ax.response?.status;
     if (status === 401) return "未授权，请重新登录";
-    if (status === 404) return "接口不存在";
+    if (status === 404) return "接口不存在 (404)，请确认后端已启动于 8000 端口";
     if (status === 500) return "服务器错误";
   }
   return "网络请求失败，请检查连接";

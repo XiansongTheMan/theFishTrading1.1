@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # 新闻 RSS 源（逗号分隔，URL 中 {fund_code} 会替换为基金代码）
     NEWS_FEED_URLS: str = "https://rsshub.app/finance/eastmoney/roll,https://rsshub.app/finance/eastmoney/fund/{fund_code},https://rsshub.app/finance/sina/roll"
 
+    # 华尔街见闻 API 基地址（独立于 AKShare/Tushare，用于股市情报）
+    WALLSTREETCN_BASE_URL: str = "https://api-prod.wallstreetcn.com"
+
     @property
     def cors_origins_list(self) -> List[str]:
         """解析 CORS 源列表"""

@@ -78,6 +78,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import("../views/GrokPrompt.vue"),
     meta: { title: "Agent 角色设定" },
   },
+  {
+    path: "/wallstreet-test",
+    name: "WallstreetTest",
+    component: () => import("../views/WallstreetTestView.vue"),
+    meta: { title: "华尔街见闻股市情报测试菜单（供 Grok 决策参考）" },
+  },
 ];
 
 const router = createRouter({
