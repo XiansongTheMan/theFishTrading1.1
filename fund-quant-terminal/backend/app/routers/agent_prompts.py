@@ -283,8 +283,8 @@ async def agent_chat_test(
             )
 
         if ok:
-            return api_success(data={"ok": True, "content": result})
-        return api_success(data={"ok": False, "content": result})
+            return api_success(data={"ok": True, "content": result, "model": model_param or cfg.get("model", "")})
+        return api_success(data={"ok": False, "content": result, "model": model_param or cfg.get("model", "")})
     except Exception as e:
         logger.exception("agent_chat_test error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

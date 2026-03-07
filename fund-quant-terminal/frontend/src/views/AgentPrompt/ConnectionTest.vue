@@ -1,10 +1,10 @@
 <!-- 连接测试：可切换 test_token / chat 两种测试模式 -->
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import axios from "axios";
 import { ElCard, ElButton, ElInput, ElScrollbar, ElIcon, ElMessage, ElSelect, ElOption } from "element-plus";
 import { Loading } from "@element-plus/icons-vue";
-import { agentChatTest } from "../../api/grok";
+import { agentChatTest, listAgentTemplates } from "../../api/grok";
 import { testToken } from "../../api/config";
 import RequestResponseLog from "./RequestResponseLog.vue";
 
@@ -12,6 +12,7 @@ const props = defineProps<{ agent: "grok" | "qwen" }>();
 
 type TestMode = "connection" | "chat";
 const testMode = ref<TestMode>("connection");
+const currentModel = ref("");
 
 const modeOptions = [
   { value: "connection" as TestMode, label: "连接测试" },
@@ -31,6 +32,20 @@ const lastRequest = ref<{ agent: string; content: string; messages?: Array<{ rol
 const lastResponse = ref<{ ok: boolean; content: string } | null>(null);
 
 const isChatMode = computed(() => testMode.value === "chat");
+
+/** 进入 chat 模式时获取当前 Agent 选中的模型（来自 Agent 角色设定） */
+async function fetchCurrentModel() {
+  try {
+    const res = (await listAgentTemplates(props.agent)) as { data?: { selected_model?: string } };
+    currentModel.value = res?.data?.selected_model ?? "";
+  } catch {
+    currentModel.value = "";
+  }
+}
+
+watch([() => props.agent, testMode], () => {
+  if (testMode.value === "chat") fetchCurrentModel();
+}, { immediate: true });
 
 function getFullErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err)) {
@@ -93,6 +108,8 @@ async function runChatTest() {
     const res = await agentChatTest(props.agent, content, history.length > 0 ? history : undefined);
     const ok = res?.data?.ok ?? false;
     const reply = res?.data?.content ?? (ok ? "" : "无返回");
+    const modelUsed = (res?.data as { model?: string })?.model ?? "";
+    if (modelUsed) currentModel.value = modelUsed;
     lastResponse.value = { ok, content: reply };
     chatMessages.value[loadingIdx] = { role: "assistant", content: reply };
     if (!ok && reply) ElMessage.warning(reply);
@@ -119,7 +136,10 @@ async function runChatTest() {
         </div>
       </div>
     </template>
-    <p class="test-tip">{{ isChatMode ? "与当前选择的 Agent 进行测试对话，支持多轮上下文记忆。不保存到数据库，刷新页面即清空。" : "验证 API Key 是否有效，发送极简请求测试连接。" }}</p>
+    <p class="test-tip">
+      {{ isChatMode ? "与当前选择的 Agent 进行测试对话，同一会话内带完整对话历史。不保存到数据库，刷新页面即清空。" : "验证 API Key 是否有效，发送极简请求测试连接。" }}
+      <span v-if="isChatMode && currentModel" class="current-model">当前模型：{{ currentModel }}</span>
+    </p>
 
     <!-- 连接测试：test_token -->
     <div v-if="!isChatMode" class="connection-test-area">
@@ -199,6 +219,9 @@ async function runChatTest() {
 .dark .connection-result.error { background: var(--el-color-danger-dark-2); color: var(--el-color-danger-light-3); }
 .test-header-actions { display: flex; align-items: center; gap: 12px; }
 .test-tip { font-size: 0.85rem; color: var(--el-text-color-secondary); margin: 0 0 12px; }
+.current-model { margin-left: 8px; font-weight: 500; color: var(--el-color-primary); }
+.current-model { margin-left: 12px; font-weight: 500; color: var(--el-color-primary); }
+.current-model { margin-left: 8px; color: var(--el-color-primary); font-weight: 500; }
 .connection-test-area { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; }
 .connection-result { font-size: 0.9rem; padding: 10px 14px; border-radius: 8px; }
 .connection-result.success { background: var(--el-color-success-light-9); color: var(--el-color-success-dark-2); }
