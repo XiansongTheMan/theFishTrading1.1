@@ -1,9 +1,7 @@
 # Agent role prompts API - grok/qwen multi-templates
 
-import json
+import asyncio
 from datetime import datetime
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -21,6 +19,7 @@ from app.routers.config_router import (
 )
 from app.schemas.response import api_success
 from app.utils.logger import logger
+from app.agent_config import chat_grok, chat_qwen, GROK_MODELS, QWEN_MODELS, get_agent_config, fetch_qwen_models
 
 router = APIRouter()
 COLLECTION = "agent_role_templates"
@@ -38,9 +37,20 @@ class AgentTemplateUpdate(BaseModel):
     content: str | None = Field(None, description="role content")
 
 
+class ChatMessageItem(BaseModel):
+    role: str = Field(..., description="user or assistant")
+    content: str = Field("", description="message content")
+
+
 class AgentChatTestRequest(BaseModel):
     agent: str = Field(..., description="grok or qwen")
     content: str = Field("", description="user input to test")
+    messages: list[dict] | None = Field(None, description="conversation history for context, [{role, content}, ...]")
+
+
+class AgentModelUpdate(BaseModel):
+    agent: str = Field(..., description="grok or qwen")
+    model: str = Field("", description="model name to select")
 
 
 @router.get("/agent-prompts")
@@ -97,15 +107,67 @@ async def list_agent_templates(
         if primary_ai not in VALID_AI_AGENTS:
             primary_ai = DEFAULT_AI_AGENT
 
+        if a == "grok":
+            models = GROK_MODELS
+        else:
+            models = QWEN_MODELS  # default fallback
+            try:
+                lst = _normalize_ai_list(tokens_doc, QWEN_LIST_KEY, "qwen_api")
+                token = (lst[0]["token"] or "").strip() if lst and lst[0].get("token") else ""
+                if token:
+                    models_result = await asyncio.to_thread(fetch_qwen_models, token)
+                    if models_result and isinstance(models_result, list) and len(models_result) > 0:
+                        models = models_result
+            except Exception:
+                pass  # keep QWEN_MODELS
+        cfg = get_agent_config(a) or {}
+        selected_model = (config_doc.get(f"selected_{a}_model") or "").strip() or cfg.get("model", "")
+
         return api_success(data={
             "items": items,
             "selected_id": selected_id or (items[0]["id"] if items else ""),
             "primary_ai_agent": primary_ai,
+            "models": models,
+            "selected_model": selected_model,
         })
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("list_agent_templates error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/agent-prompts/models")
+async def sync_agent_models(
+    agent: str = Query(..., description="grok or qwen"),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """从官方接口同步可用模型列表。qwen 调用 DashScope GET /v1/models，grok 返回本地列表。"""
+    try:
+        a = (agent or "").strip().lower()
+        if a not in VALID_AI_AGENTS:
+            a = DEFAULT_AI_AGENT
+
+        if a == "grok":
+            return api_success(data={"models": GROK_MODELS, "from_api": False})
+
+        tokens_doc = await db["config"].find_one({"_id": CONFIG_ID}) or {}
+        lst = _normalize_ai_list(tokens_doc, QWEN_LIST_KEY, "qwen_api")
+        token = (lst[0]["token"] or "").strip() if lst and lst[0].get("token") else ""
+        if not token:
+            return api_success(data={"models": QWEN_MODELS, "from_api": False})
+
+        try:
+            models_result = await asyncio.to_thread(fetch_qwen_models, token)
+            if models_result and isinstance(models_result, list) and len(models_result) > 0:
+                return api_success(data={"models": models_result, "from_api": True})
+        except Exception:
+            pass
+        return api_success(data={"models": QWEN_MODELS, "from_api": False})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("sync_agent_models error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -162,72 +224,7 @@ async def create_agent_template(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _chat_grok(token: str, user_content: str) -> tuple[bool, str]:
-    """调用 Grok 对话，返回 (成功, 内容或错误信息)"""
-    if not token or not token.strip():
-        return False, "Token 为空"
-    try:
-        url = "https://api.x.ai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {token.strip()}",
-            "Content-Type": "application/json",
-            "User-Agent": "fund-quant-terminal/1.0",
-        }
-        body = json.dumps({
-            "model": "grok-4-1-fast-non-reasoning",
-            "messages": [{"role": "user", "content": (user_content or "hi").strip()[:4000]}],
-            "max_tokens": 2000,
-            "stream": False,
-        }).encode("utf-8")
-        req = Request(url, data=body, headers=headers, method="POST")
-        with urlopen(req, timeout=90) as resp:
-            data = json.loads(resp.read().decode())
-            choices = data.get("choices") or []
-            if choices and choices[0].get("message", {}).get("content"):
-                return True, choices[0]["message"]["content"]
-            return False, "接口无返回"
-    except HTTPError as e:
-        try:
-            err_data = json.loads(e.read().decode())
-            msg = err_data.get("error", {}).get("message", str(e))
-        except Exception:
-            msg = str(e)
-        return False, msg
-    except (URLError, OSError, json.JSONDecodeError) as e:
-        return False, str(e) or "连接失败"
 
-
-def _chat_qwen(token: str, user_content: str) -> tuple[bool, str]:
-    """调用通义千问对话，返回 (成功, 内容或错误信息)"""
-    if not token or not token.strip():
-        return False, "Token 为空"
-    try:
-        url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {token.strip()}",
-            "Content-Type": "application/json",
-        }
-        body = json.dumps({
-            "model": "qwen-turbo",
-            "messages": [{"role": "user", "content": (user_content or "hi").strip()[:4000]}],
-            "max_tokens": 2000,
-        }).encode("utf-8")
-        req = Request(url, data=body, headers=headers, method="POST")
-        with urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode())
-            choices = data.get("choices") or []
-            if choices and choices[0].get("message", {}).get("content"):
-                return True, choices[0]["message"]["content"]
-            return False, "接口无返回"
-    except HTTPError as e:
-        try:
-            err_data = json.loads(e.read().decode())
-            msg = err_data.get("error", {}).get("message", str(e))
-        except Exception:
-            msg = str(e)
-        return False, msg
-    except (URLError, OSError, json.JSONDecodeError) as e:
-        return False, str(e) or "连接失败"
 
 
 @router.post("/agent-prompts-test")
@@ -237,6 +234,8 @@ async def agent_chat_test(
 ):
     """测试 Agent 连接：用户输入内容，Agent 返回回复。不保存到数据库。"""
     import asyncio
+    from bson import ObjectId
+
     try:
         a = (body.agent or "").strip().lower()
         if a not in VALID_AI_AGENTS:
@@ -253,16 +252,63 @@ async def agent_chat_test(
 
         token_val = lst[0]["token"].strip()
         user_content = (body.content or "").strip() or "你好"
+        hist = body.messages if body.messages else None
+
+        # 获取当前选中的 Agent 角色模板，作为 system 提示；若有历史则追加「结合历史作答」指令
+        system_prompt = ""
+        role_config = await db["config"].find_one({"_id": CONFIG_AGENT_ROLE}) or {}
+        selected_id = (role_config.get(f"selected_{a}_id") or "").strip()
+        if selected_id:
+            try:
+                template_doc = await db[COLLECTION].find_one({"_id": ObjectId(selected_id)})
+                if template_doc and template_doc.get("content"):
+                    system_prompt = (template_doc["content"] or "").strip()
+            except Exception:
+                pass
+        if hist and len(hist) > 0:
+            ctx_hint = "请结合上述对话历史中的上下文信息作答。若用户已在历史中给出变量或数值，请据此推理并给出具体答案。"
+            system_prompt = (system_prompt + "\n\n" + ctx_hint).strip() if system_prompt else ctx_hint
+
+        selected_model = (role_config.get(f"selected_{a}_model") or "").strip() or None
+        cfg = get_agent_config(a) or {}
+        model_param = selected_model or cfg.get("model") or None
+
         if a == "grok":
-            ok, result = await asyncio.to_thread(_chat_grok, token_val, user_content)
+            ok, result = await asyncio.to_thread(
+                chat_grok, token_val, user_content, hist, system_prompt or None, model_param
+            )
         else:
-            ok, result = await asyncio.to_thread(_chat_qwen, token_val, user_content)
+            ok, result = await asyncio.to_thread(
+                chat_qwen, token_val, user_content, hist, system_prompt or None, model_param
+            )
 
         if ok:
             return api_success(data={"ok": True, "content": result})
         return api_success(data={"ok": False, "content": result})
     except Exception as e:
         logger.exception("agent_chat_test error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/agent-prompts/model")
+async def update_agent_model(
+    body: AgentModelUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """保存当前 Agent 选中的模型到 agent_role_config"""
+    try:
+        a = (body.agent or "").strip().lower()
+        if a not in VALID_AI_AGENTS:
+            a = DEFAULT_AI_AGENT
+        model_val = (body.model or "").strip()
+        await db["config"].update_one(
+            {"_id": CONFIG_AGENT_ROLE},
+            {"$set": {f"selected_{a}_model": model_val, "updated_at": datetime.utcnow()}},
+            upsert=True,
+        )
+        return api_success(message="saved")
+    except Exception as e:
+        logger.exception("update_agent_model error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

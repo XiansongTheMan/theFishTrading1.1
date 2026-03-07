@@ -1,8 +1,8 @@
 // =====================================================
-// 华尔街见闻 API
+// 华尔街见闻 API（news 模块）
 // =====================================================
 
-import { request } from "./request";
+import { request } from "@/api/request";
 
 export type WallStreetCNType = "lives" | "articles" | "search" | "quote" | "keyword";
 

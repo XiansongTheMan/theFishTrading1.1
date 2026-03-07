@@ -2,7 +2,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import MarkdownIt from "markdown-it";
-import axios from "axios";
 import {
   ElCard,
   ElInput,
@@ -12,38 +11,103 @@ import {
   ElOption,
   ElEmpty,
   ElMessageBox,
-  ElDialog,
-  ElScrollbar,
-  ElIcon,
+  ElTooltip,
 } from "element-plus";
-import { Loading } from "@element-plus/icons-vue";
-import { Delete } from "@element-plus/icons-vue";
+import { Delete, Refresh } from "@element-plus/icons-vue";
 import {
   listAgentTemplates,
   createAgentTemplate,
   updateAgentTemplate,
   deleteAgentTemplate,
   selectAgentTemplate,
-  agentChatTest,
+  updateAgentModel,
+  syncAgentModels,
   type AgentTemplateItem,
-} from "../api/grok";
+} from "../../api/grok";
 
-const agent = ref<"grok" | "qwen">("grok");
+/** 前端兜底模型列表，当 API 未返回或失败时使用，确保下拉框可操作 */
+const FALLBACK_GROK_MODELS = [
+  { value: "grok-4-fast-reasoning", label: "grok-4-fast-reasoning（推荐）" },
+  { value: "grok-2-1212", label: "grok-2-1212" },
+  { value: "grok-3", label: "grok-3" },
+  { value: "grok-4-1-fast-non-reasoning", label: "grok-4-1-fast-non-reasoning" },
+];
+const FALLBACK_QWEN_MODELS = [
+  { value: "qwen-turbo", label: "qwen-turbo（快速）" },
+  { value: "qwen-turbo-latest", label: "qwen-turbo-latest" },
+  { value: "qwen3.5-flash", label: "qwen3.5-flash（推荐）" },
+  { value: "qwen-flash", label: "qwen-flash" },
+  { value: "qwen-flash-latest", label: "qwen-flash-latest" },
+  { value: "qwen-plus", label: "qwen-plus" },
+  { value: "qwen-plus-latest", label: "qwen-plus-latest" },
+  { value: "qwen3.5-plus", label: "qwen3.5-plus" },
+  { value: "qwen-max", label: "qwen-max" },
+  { value: "qwen-max-latest", label: "qwen-max-latest" },
+  { value: "qwen-long", label: "qwen-long（长文本）" },
+  { value: "qwen-long-latest", label: "qwen-long-latest" },
+  { value: "qwen2.5-72b-instruct", label: "qwen2.5-72b-instruct" },
+  { value: "qwen2.5-32b-instruct", label: "qwen2.5-32b-instruct" },
+  { value: "qwen2.5-14b-instruct", label: "qwen2.5-14b-instruct" },
+  { value: "qwen2.5-7b-instruct", label: "qwen2.5-7b-instruct" },
+  { value: "qwen2.5-1.5b-instruct", label: "qwen2.5-1.5b-instruct" },
+  { value: "qwen2-72b-instruct", label: "qwen2-72b-instruct" },
+  { value: "qwen2-7b-instruct", label: "qwen2-7b-instruct" },
+  { value: "qwen2-1.5b-instruct", label: "qwen2-1.5b-instruct" },
+  { value: "qwen2.5-coder-32b-instruct", label: "qwen2.5-coder-32b（代码）" },
+  { value: "qwen2.5-coder-7b-instruct", label: "qwen2.5-coder-7b（代码）" },
+  { value: "qwen-vl-max", label: "qwen-vl-max（视觉）" },
+  { value: "qwen-vl-plus", label: "qwen-vl-plus（视觉）" },
+  { value: "qwen2-0.5b-instruct", label: "qwen2-0.5b-instruct" },
+];
+
+/** 模型说明映射，用于悬停 tooltip */
+const MODEL_DESCRIPTIONS: Record<string, string> = {
+  "qwen-turbo": "快速推理模型，适合简单对话与高并发场景",
+  "qwen-turbo-latest": "qwen-turbo 最新版，持续更新",
+  "qwen3.5-flash": "速度快、性价比高，推荐日常使用",
+  "qwen-flash": "轻量快速模型，响应迅速",
+  "qwen-flash-latest": "qwen-flash 最新版",
+  "qwen-plus": "增强版，理解与生成能力更强",
+  "qwen-plus-latest": "qwen-plus 最新版",
+  "qwen3.5-plus": "增强版，综合能力出色",
+  "qwen-max": "最强模型，适合复杂任务",
+  "qwen-max-latest": "qwen-max 最新版",
+  "qwen-long": "长文本模型，支持百万级上下文",
+  "qwen-long-latest": "qwen-long 最新版",
+  "qwen2.5-72b-instruct": "72B 参数，高精度对话",
+  "qwen2.5-32b-instruct": "32B 参数，性能与成本平衡",
+  "qwen2.5-14b-instruct": "14B 参数，轻量高效",
+  "qwen2.5-7b-instruct": "7B 参数，快速推理",
+  "qwen2.5-1.5b-instruct": "1.5B 参数，超轻量",
+  "qwen2-72b-instruct": "Qwen2 72B 版本",
+  "qwen2-7b-instruct": "Qwen2 7B 版本",
+  "qwen2-1.5b-instruct": "Qwen2 1.5B 版本",
+  "qwen2.5-coder-32b-instruct": "代码专用，32B 参数",
+  "qwen2.5-coder-7b-instruct": "代码专用，7B 参数",
+  "qwen-vl-max": "视觉语言模型，支持图像理解",
+  "qwen-vl-plus": "视觉语言模型，轻量版",
+  "qwen2-0.5b-instruct": "Qwen2 0.5B 超轻量版本",
+  "grok-2-1212": "推荐，131K 上下文，综合能力强",
+  "grok-3": "新一代模型，能力升级",
+  "grok-3-mini": "轻量版，响应更快",
+  "grok-4-1-fast-non-reasoning": "快速非推理模式",
+};
+
+function getModelDesc(value: string): string {
+  return MODEL_DESCRIPTIONS[value] ?? `模型：${value}`;
+}
+
+const agent = defineModel<"grok" | "qwen">("agent", { default: "grok" });
 const loading = ref(false);
 const saving = ref(false);
+const syncingModels = ref(false);
 const templates = ref<AgentTemplateItem[]>([]);
 const selectedId = ref("");
+const selectedModel = ref("");
+const models = ref<Array<{ value: string; label: string }>>([]);
 const primaryAiAgent = ref<"grok" | "qwen">("grok");
 const templateName = ref("");
 const promptContent = ref("");
-const testInput = ref("");
-const testDialogVisible = ref(false);
-interface ChatMsg {
-  role: "user" | "assistant";
-  content: string;
-  loading?: boolean;
-}
-const chatMessages = ref<ChatMsg[]>([]);
 
 const currentTemplate = computed(() =>
   templates.value.find((t) => t.id === selectedId.value)
@@ -60,10 +124,29 @@ async function load(ag?: "grok" | "qwen") {
   loading.value = true;
   try {
     const res = (await listAgentTemplates(a)) as {
-      data?: { items?: AgentTemplateItem[]; selected_id?: string; primary_ai_agent?: string };
+      data?: {
+        items?: AgentTemplateItem[];
+        selected_id?: string;
+        primary_ai_agent?: string;
+        models?: Array<{ value: string; label: string }>;
+        selected_model?: string;
+      };
     };
     templates.value = res?.data?.items ?? [];
     selectedId.value = res?.data?.selected_id ?? "";
+    models.value = res?.data?.models ?? [];
+    if (models.value.length === 0 && a === "qwen") models.value = FALLBACK_QWEN_MODELS;
+    if (models.value.length === 0 && a === "grok") models.value = FALLBACK_GROK_MODELS;
+    selectedModel.value = res?.data?.selected_model ?? "";
+    const defaultModel = a === "qwen" ? "qwen-max" : "grok-4-fast-reasoning";
+    const hasDefault = models.value.some((m) => m.value === defaultModel);
+    if (!hasDefault && models.value.length > 0) {
+      models.value = [{ value: defaultModel, label: defaultModel }, ...models.value];
+    }
+    const inList = models.value.some((m) => m.value === selectedModel.value);
+    if (!selectedModel.value || !inList) {
+      selectedModel.value = models.value.find((m) => m.value === defaultModel)?.value ?? models.value[0]?.value ?? defaultModel;
+    }
     const primary = (res?.data?.primary_ai_agent || "grok") === "qwen" ? "qwen" : "grok";
     primaryAiAgent.value = primary;
     if (!ag) {
@@ -75,6 +158,7 @@ async function load(ag?: "grok" | "qwen") {
   } catch {
     templates.value = [];
     selectedId.value = "";
+    models.value = agent.value === "qwen" ? FALLBACK_QWEN_MODELS : FALLBACK_GROK_MODELS;
     ElMessage.error("加载失败");
   } finally {
     loading.value = false;
@@ -85,6 +169,37 @@ function syncContentFromSelected() {
   const t = currentTemplate.value;
   templateName.value = t?.name ?? "";
   promptContent.value = t?.content ?? "";
+}
+
+async function onModelChange(val: string) {
+  try {
+    await updateAgentModel(agent.value, val || "");
+    ElMessage.success("模型已保存");
+  } catch {
+    ElMessage.error("保存模型失败");
+  }
+}
+
+async function syncModels() {
+  syncingModels.value = true;
+  try {
+    const res = (await syncAgentModels(agent.value)) as {
+      data?: { models?: Array<{ value: string; label: string }>; from_api?: boolean };
+    };
+    const list = res?.data?.models ?? [];
+    if (list.length > 0) {
+      models.value = list;
+      ElMessage.success(res?.data?.from_api ? "已从官方接口同步模型列表" : "已加载模型列表");
+    } else {
+      models.value = agent.value === "qwen" ? FALLBACK_QWEN_MODELS : FALLBACK_GROK_MODELS;
+      ElMessage.warning("同步无结果，已使用兜底列表");
+    }
+  } catch {
+    models.value = agent.value === "qwen" ? FALLBACK_QWEN_MODELS : FALLBACK_GROK_MODELS;
+    ElMessage.error("同步失败，已使用兜底列表");
+  } finally {
+    syncingModels.value = false;
+  }
 }
 
 watch(selectedId, () => syncContentFromSelected());
@@ -166,55 +281,11 @@ async function doDelete(id: string) {
   }
 }
 
-function getFullErrorMessage(err: unknown): string {
-  if (axios.isAxiosError(err)) {
-    const data = err.response?.data as { detail?: string | unknown; message?: string } | undefined;
-    if (data?.detail) return typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
-    if (data?.message) return data.message;
-    if (err.response?.status) return `HTTP ${err.response.status}: ${err.message || "请求失败"}`;
-    if (err.code === "ECONNABORTED") return "请求超时（15 秒）";
-    if (err.message) return err.message;
-  }
-  if (err instanceof Error && err.message) return err.message;
-  return String(err) || "请求失败";
-}
-
-function openTestDialog() {
-  testDialogVisible.value = true;
-  chatMessages.value = [];
-}
-
-function resetChat() {
-  chatMessages.value = [];
-}
-
-async function runTest() {
-  const content = (testInput.value || "").trim() || "你好";
-  testInput.value = "";
-  chatMessages.value.push({ role: "user", content });
-  const loadingIdx = chatMessages.value.length;
-  chatMessages.value.push({ role: "assistant", content: "", loading: true });
-  try {
-    const res = (await agentChatTest(agent.value, content)) as {
-      data?: { ok?: boolean; content?: string };
-    };
-    const ok = res?.data?.ok ?? false;
-    const reply = res?.data?.content ?? (ok ? "" : "无返回");
-    chatMessages.value[loadingIdx] = { role: "assistant", content: reply };
-    if (!ok && reply) ElMessage.warning(reply);
-    else if (ok) ElMessage.success("测试成功");
-  } catch (e) {
-    const fullMsg = getFullErrorMessage(e);
-    chatMessages.value[loadingIdx] = { role: "assistant", content: `请求失败\n\n${fullMsg}` };
-    ElMessage.error("测试失败");
-  }
-}
-
 onMounted(() => load());
 </script>
 
 <template>
-  <div class="agent-prompt">
+  <div class="agent-role-setting">
     <ElCard shadow="never" class="main-card">
       <template #header>
         <span>Agent 角色设定</span>
@@ -223,6 +294,34 @@ onMounted(() => load());
             <ElOption label="Grok (x.ai)" value="grok" />
             <ElOption label="通义千问 (Qwen)" value="qwen" />
           </ElSelect>
+          <ElSelect
+            v-model="selectedModel"
+            placeholder="选择模型"
+            size="small"
+            style="width: 220px"
+            :disabled="loading"
+            @change="onModelChange"
+          >
+            <ElOption
+              v-for="m in models"
+              :key="m.value"
+              :label="m.label"
+              :value="m.value"
+            >
+              <ElTooltip :content="getModelDesc(m.value)" placement="right">
+                <span>{{ m.label }}</span>
+              </ElTooltip>
+            </ElOption>
+          </ElSelect>
+          <ElButton
+            size="small"
+            :icon="Refresh"
+            :loading="syncingModels"
+            title="从官方接口同步可用模型"
+            @click="syncModels"
+          >
+            模型同步
+          </ElButton>
           <ElSelect
             v-model="selectedId"
             placeholder="选择角色模板"
@@ -237,9 +336,7 @@ onMounted(() => load());
               :value="t.id"
             />
           </ElSelect>
-          <ElButton type="primary" size="small" :loading="saving" @click="saveCurrent">
-            保存
-          </ElButton>
+          <ElButton type="primary" size="small" :loading="saving" @click="saveCurrent">保存</ElButton>
           <ElButton
             v-if="selectedId"
             type="danger"
@@ -297,64 +394,11 @@ onMounted(() => load());
         </div>
       </template>
     </ElCard>
-
-    <ElCard shadow="never" class="test-card">
-      <template #header>连接测试</template>
-      <p class="test-tip">点击下方按钮打开对话窗，与当前选择的 Agent 进行测试对话。不保存到数据库。</p>
-      <ElButton type="primary" @click="openTestDialog">打开连接测试</ElButton>
-    </ElCard>
-
-    <ElDialog
-      v-model="testDialogVisible"
-      title="连接测试"
-      width="520px"
-      class="chat-dialog"
-      :close-on-click-modal="false"
-      destroy-on-close
-      @closed="resetChat"
-    >
-      <div class="chat-container">
-        <ElScrollbar class="chat-messages" max-height="360px">
-          <div v-if="chatMessages.length === 0" class="chat-empty">发送消息开始测试</div>
-          <div
-            v-for="(msg, idx) in chatMessages"
-            :key="idx"
-            :class="['chat-row', msg.role === 'user' ? 'chat-row-user' : 'chat-row-assistant']"
-          >
-            <div :class="['chat-bubble', msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-assistant']">
-              <template v-if="msg.loading">
-                <ElIcon class="chat-loading-icon" :size="16"><Loading /></ElIcon>
-                <span>加载中</span>
-              </template>
-              <template v-else>{{ msg.content || "—" }}</template>
-            </div>
-          </div>
-        </ElScrollbar>
-        <div class="chat-input-row">
-          <ElInput
-            v-model="testInput"
-            type="textarea"
-            :rows="2"
-            placeholder="输入测试内容，如：你好，请简单介绍一下你自己"
-            :disabled="chatMessages.some(m => m.loading)"
-            @keydown.ctrl.enter="runTest"
-          />
-          <ElButton
-            type="primary"
-            :disabled="chatMessages.some(m => m.loading)"
-            @click="runTest"
-            class="chat-send-btn"
-          >
-            发送
-          </ElButton>
-        </div>
-      </div>
-    </ElDialog>
   </div>
 </template>
 
 <style scoped>
-.agent-prompt { max-width: 900px; }
+.agent-role-setting { max-width: 900px; }
 .main-card { margin-bottom: 20px; }
 .header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .template-select { width: 200px; }
@@ -372,7 +416,6 @@ onMounted(() => load());
   min-height: 80px;
 }
 
-/* 深色模式：Element Plus 变量自动切换，或父级 .dark */
 .dark .preview-section {
   background: var(--el-fill-color);
 }
@@ -458,33 +501,9 @@ onMounted(() => load());
   font-weight: 600;
 }
 
-
 .actions { margin-top: 16px; display: flex; gap: 12px; }
 
-.test-card { margin-bottom: 20px; }
-.test-tip { font-size: 0.85rem; color: var(--el-text-color-secondary); margin: 0 0 12px; }
-
-/* 微信风格对话弹窗 */
-.chat-dialog :deep(.el-dialog__body) { padding: 0 20px 16px; }
-.chat-container { display: flex; flex-direction: column; gap: 12px; }
-.chat-messages { padding: 8px 0; }
-.chat-empty { text-align: center; color: var(--el-text-color-placeholder); font-size: 0.9rem; padding: 24px; }
-.chat-row { display: flex; margin-bottom: 12px; }
-.chat-row-user { justify-content: flex-end; }
-.chat-row-assistant { justify-content: flex-start; }
-.chat-bubble { max-width: 78%; padding: 10px 14px; border-radius: 12px; font-size: 0.95rem; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
-.chat-bubble-user { background: var(--el-color-primary); color: #fff; border-top-right-radius: 4px; }
-.chat-bubble-assistant { background: var(--el-fill-color-light); color: var(--el-text-color-primary); border-top-left-radius: 4px; }
-.dark .chat-bubble-assistant { background: var(--el-fill-color); }
-.chat-loading-icon { margin-right: 6px; vertical-align: middle; animation: spin 1s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-.chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
-.chat-input-row :deep(.el-input) { flex: 1; }
-.chat-send-btn { flex-shrink: 0; }
-
 @media (max-width: 768px) {
-  .actions {
-    flex-wrap: wrap;
-  }
+  .actions { flex-wrap: wrap; }
 }
 </style>

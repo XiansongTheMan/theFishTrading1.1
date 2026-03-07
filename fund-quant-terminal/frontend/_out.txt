@@ -1,0 +1,36 @@
+y {
+    saving.value = false;
+  }
+}
+
+async function saveCurrent() {
+  if (!selectedId.value) {
+    addNew();
+    return;
+  }
+  const name = (templateName.value || "未命名").trim() || "未命名";
+  saving.value = true;
+  try {
+    await updateAgentTemplate(selectedId.value, { name, content: promptContent.value });
+    ElMessage.success("已更新");
+    await load();
+    syncContentFromSelected();
+  } catch {
+    ElMessage.error("更新失败");
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function doSelect(id: string) {
+  try {
+    await selectAgentTemplate(id);
+    selectedId.value = id;
+    ElMessage.success("已删除");
+    await load();
+  } catch {
+    ElMessage.error("选中失败");
+  }
+}
+
+async function doDelet

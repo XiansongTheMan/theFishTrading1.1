@@ -84,13 +84,15 @@ def _parse_item(item: Dict[str, Any]) -> Dict[str, Any]:
     title = str(item.get("title") or item.get("headline") or "").strip()
     content = str(item.get("content_text") or item.get("content") or item.get("summary") or "").strip()
     summary = content[:500] if content else ""
+    # 部分快讯无 title，用 content 前 80 字作为标题
+    display_title = title or (content[:80] + "..." if len(content) > 80 else content) or "(无标题)"
     url = str(item.get("uri") or item.get("link") or item.get("url") or "").strip()
     ts = item.get("display_time") or item.get("created_at") or item.get("published_at") or item.get("timestamp")
     published_time = _parse_timestamp(ts)
     text_for_sentiment = f"{title} {summary}"
     sentiment = _compute_sentiment(text_for_sentiment)
     return {
-        "title": title or "(无标题)",
+        "title": display_title,
         "published_time": published_time.isoformat() if published_time else None,
         "summary": summary,
         "url": url or None,
@@ -120,7 +122,9 @@ class WallStreetCNService:
         """
         raw = None
         if type_ == "lives":
-            raw = await self._client.get_live_news(limit=limit, cursor=cursor)
+            # lives 需 channel，如 global-channel/a-stock-channel
+            lives_channel = channel if channel and "channel" in channel else "global-channel"
+            raw = await self._client.get_live_news(limit=limit, cursor=cursor, channel=lives_channel)
         elif type_ == "articles":
             raw = await self._client.get_articles(channel=channel, limit=limit)
         elif type_ == "keyword" and keyword:

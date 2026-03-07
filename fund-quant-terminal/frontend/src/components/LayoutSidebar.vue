@@ -36,6 +36,7 @@ const topMenuItems = [
   { path: "/curve", name: "资产曲线", icon: "TrendCharts" },
   { path: "/assets", name: "资产", icon: "Wallet" },
   { path: "/news", title: "市场资讯", name: "市场资讯", icon: "News" },
+  { path: "/wallstreet-test", name: "news接口测试", icon: "Connection" },
 ];
 
 const settingsSubItems = [
@@ -43,7 +44,6 @@ const settingsSubItems = [
   { path: "/interfaces", name: "接口" },
   { path: "/grok-prompt", name: "Agent 角色设定" },
   { path: "/token", name: "Token" },
-  { path: "/wallstreet-test", name: "华尔街见闻股市情报测试（供 Grok 参考）" },
   { path: "/mongo-test", name: "MongoDB 连接测试" },
 ];
 

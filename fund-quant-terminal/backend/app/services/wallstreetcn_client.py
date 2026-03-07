@@ -11,7 +11,8 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from app.utils.logger import logger
 
-BASE_URL = "https://api-prod.wallstreetcn.com"  # 可通过 WALLSTREETCN_BASE_URL 覆盖
+# 快讯 lives 需用 api-one.wallstcn.com；api-prod 返回空 data
+BASE_URL = "https://api-one.wallstcn.com"
 DEFAULT_TIMEOUT = 10.0
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -77,9 +78,12 @@ class WallStreetCNClient:
             raise
 
     @_retry_async_decorator
-    async def get_live_news(self, limit: int = 20, cursor: int = 0) -> Any:
-        """获取快讯 / 实时新闻，返回原始 JSON"""
-        return await self._get_json_async("/apiv1/content/lives", params={"limit": limit, "cursor": cursor})
+    async def get_live_news(self, limit: int = 20, cursor: int = 0, channel: str = "global-channel") -> Any:
+        """获取快讯 / 实时新闻，channel 如 global-channel/a-stock-channel"""
+        return await self._get_json_async(
+            "/apiv1/content/lives",
+            params={"limit": limit, "cursor": cursor, "channel": channel},
+        )
 
     @_retry_async_decorator
     async def get_articles(self, channel: str = "news", limit: int = 10) -> Any:
@@ -102,8 +106,8 @@ class WallStreetCNClient:
         return await self._get_json_async("/apiv1/search", params={"keyword": keyword, "limit": limit})
 
     @_retry_decorator
-    def get_live_news_sync(self, limit: int = 20, cursor: int = 0):
-        return self._get_json_sync("/apiv1/content/lives", params={"limit": limit, "cursor": cursor})
+    def get_live_news_sync(self, limit: int = 20, cursor: int = 0, channel: str = "global-channel"):
+        return self._get_json_sync("/apiv1/content/lives", params={"limit": limit, "cursor": cursor, "channel": channel})
 
     @_retry_decorator
     def get_articles_sync(self, channel: str = "news", limit: int = 10):

@@ -14,11 +14,31 @@ export interface AgentTemplateItem {
   is_selected: boolean;
 }
 
+/** 模型选项 */
+export interface ModelOption {
+  value: string;
+  label: string;
+}
+
 export const listAgentTemplates = (agent: string) =>
-  request.get<{ data: { items: AgentTemplateItem[]; selected_id: string; primary_ai_agent: string } }>(
-    "/agent-prompts",
-    { params: { agent } }
-  );
+  request.get<{
+    data: {
+      items: AgentTemplateItem[];
+      selected_id: string;
+      primary_ai_agent: string;
+      models: ModelOption[];
+      selected_model: string;
+    };
+  }>("/agent-prompts", { params: { agent } });
+
+export const updateAgentModel = (agent: string, model: string) =>
+  request.put("/agent-prompts/model", { agent, model });
+
+/** 从官方接口同步可用模型列表 */
+export const syncAgentModels = (agent: string) =>
+  request.get<{ data: { models: ModelOption[]; from_api: boolean } }>("/agent-prompts/models", {
+    params: { agent },
+  });
 
 export const getPrimaryAgent = () =>
   request.get<{ data: { primary_ai_agent: string } }>("/agent-prompts/primary");
@@ -35,11 +55,16 @@ export const deleteAgentTemplate = (templateId: string) =>
 export const selectAgentTemplate = (templateId: string) =>
   request.post("/agent-prompts/" + templateId + "/select");
 
-/** 测试 Agent 连接：输入内容，返回 Agent 回复，不保存 */
-export const agentChatTest = (agent: string, content: string) =>
+/** 测试 Agent 连接：输入内容，返回 Agent 回复，不保存。messages 为对话历史，用于多轮上下文。 */
+export const agentChatTest = (
+  agent: string,
+  content: string,
+  messages?: Array<{ role: string; content: string }>
+) =>
   request.post<{ data: { ok: boolean; content: string } }>("/agent-prompts-test", {
     agent,
     content,
+    messages: messages ?? undefined,
   });
 
 export interface GrokPromptDoc {

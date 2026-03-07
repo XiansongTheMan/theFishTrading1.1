@@ -1,0 +1,45 @@
+gent-role-setting">
+    <ElCard shadow="never" class="main-card">
+      <template #header>
+        <span>Agent 角色设定</span>
+        <div class="header-actions">
+          <ElSelect v-model="agent" size="small" style="width: 140px" @change="load">
+            <ElOption label="Grok (x.ai)" value="grok" />
+            <ElOption label="通义千问 (Qwen)" value="qwen" />
+          </ElSelect>
+          <ElSelect
+            v-model="selectedId"
+            placeholder="选择角色模板"
+            clearable
+            class="template-select"
+            @change="syncContentFromSelected"
+          >
+            <ElOption
+              v-for="t in templates"
+              :key="t.id"
+              :label="t.name + (t.is_selected ? ' ✓' : '')"
+              :value="t.id"
+            />
+          </ElSelect>
+          <ElButton type="primary" size="small" :loading="saving" @click="saveCurrent">保存</ElButton>
+          <ElButton
+            v-if="selectedId"
+            type="danger"
+            size="small"
+            link
+            :icon="Delete"
+            @click="doDelete(selectedId)"
+          >
+            删除
+          </ElButton>
+        </div>
+      </template>
+
+      <p class="tip">
+        选择 Grok 或 Qwen 后管理对应角色模板；Token 配置中选择的 Agent 将启用其选中的模板
+      </p>
+
+      <div v-if="templates.length === 0 && !loading" class="empty-state">
+        <ElEmpty description="暂无角色模板，请新建" :image-size="60" />
+        <ElInput v-model="templateName" placeholder="模板名称（如：量化经理）" class="name-input" />
+        <ElI

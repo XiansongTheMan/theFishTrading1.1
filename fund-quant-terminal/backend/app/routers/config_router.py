@@ -17,9 +17,11 @@ from app.database import get_database
 from app.routers.data import data_service
 from app.schemas.response import api_success
 from app.utils.logger import logger
+from app.agent_config import test_grok_token, test_qwen_token, get_agent_config
 
 router = APIRouter()
 CONFIG_ID = "tokens"
+CONFIG_AGENT_ROLE = "agent_role_config"
 
 # AI Agent 可选：grok / qwen，二选一，默认 grok
 PRIMARY_AI_AGENT_KEY = "primary_ai_agent"
@@ -264,80 +266,6 @@ def _test_tushare_token(token: str) -> tuple[bool, str]:
         return False, str(e) or "连接失败"
 
 
-def _test_grok_token(token: str) -> tuple[bool, str]:
-    """测试 Grok (x.ai) API Token 是否有效；使用 HTTP chat/completions + 轻量模型，超时 60 秒"""
-    if not token or not token.strip():
-        return False, "Token 为空"
-    try:
-        url = "https://api.x.ai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {token.strip()}",
-            "Content-Type": "application/json",
-            "User-Agent": "fund-quant-terminal/1.0",
-        }
-        # grok-4-1-fast-non-reasoning 无推理模式，响应更快；极简 prompt
-        body = json.dumps({
-            "model": "grok-4-1-fast-non-reasoning",
-            "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 5,
-            "stream": False,
-        }).encode("utf-8")
-        req = Request(url, data=body, headers=headers, method="POST")
-        with urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode())
-            if data.get("choices") and len(data["choices"]) > 0:
-                return True, ""
-            return False, "接口无返回"
-    except HTTPError as e:
-        try:
-            err_body = e.read().decode()
-            err_data = json.loads(err_body)
-            msg = err_data.get("error", {}).get("message", err_body) or str(e)
-        except Exception:
-            msg = str(e) or "连接失败"
-        if e.code == 403:
-            msg = f"{msg}（403：API Key 权限不足、团队被限制，或所在地区无法访问 x.ai）"
-        return False, msg
-    except OSError as e:
-        err_msg = str(e) or "连接失败"
-        if "timed out" in err_msg.lower() or "timeout" in err_msg.lower():
-            err_msg = f"连接超时（约 60 秒），请检查网络或代理，x.ai 在国内需代理"
-        return False, err_msg
-    except (URLError, json.JSONDecodeError) as e:
-        return False, str(e) or "连接失败"
-
-
-def _test_qwen_token(token: str) -> tuple[bool, str]:
-    """测试通义千问 (DashScope) API Token 是否有效"""
-    if not token or not token.strip():
-        return False, "Token 为空"
-    try:
-        url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {token.strip()}",
-            "Content-Type": "application/json",
-        }
-        body = json.dumps({
-            "model": "qwen-turbo",
-            "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 5,
-        }).encode("utf-8")
-        req = Request(url, data=body, headers=headers, method="POST")
-        with urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-            if data.get("choices") and len(data["choices"]) > 0:
-                return True, ""
-            return False, "接口返回异常"
-    except HTTPError as e:
-        try:
-            err_body = e.read().decode()
-            err_data = json.loads(err_body)
-            msg = err_data.get("error", {}).get("message", err_body) or str(e)
-        except Exception:
-            msg = str(e) or "连接失败"
-        return False, msg
-    except (URLError, OSError, json.JSONDecodeError) as e:
-        return False, str(e) or "连接失败"
 
 
 def _test_akshare_connection() -> tuple[bool, str]:
@@ -399,7 +327,10 @@ async def test_token(
                     token_val = (grok_list[idx].get("token") or "").strip()
             if not token_val:
                 return api_success(data={"ok": False, "message": "请先配置 Token"})
-            ok, msg = await asyncio.to_thread(_test_grok_token, token_val)
+            role_doc = await db["config"].find_one({"_id": CONFIG_AGENT_ROLE}) or {}
+            cfg = get_agent_config("grok") or {}
+            model_param = (role_doc.get("selected_grok_model") or "").strip() or cfg.get("model") or None
+            ok, msg = await asyncio.to_thread(test_grok_token, token_val, model_param)
             if ok:
                 return api_success(data={"ok": True})
             return api_success(data={"ok": False, "message": msg or "连接失败"})
@@ -414,7 +345,10 @@ async def test_token(
                     token_val = (qwen_list[idx].get("token") or "").strip()
             if not token_val:
                 return api_success(data={"ok": False, "message": "请先配置 Token"})
-            ok, msg = await asyncio.to_thread(_test_qwen_token, token_val)
+            role_doc = await db["config"].find_one({"_id": CONFIG_AGENT_ROLE}) or {}
+            cfg = get_agent_config("qwen") or {}
+            model_param = (role_doc.get("selected_qwen_model") or "").strip() or cfg.get("model") or None
+            ok, msg = await asyncio.to_thread(test_qwen_token, token_val, model_param)
             if ok:
                 return api_success(data={"ok": True})
             return api_success(data={"ok": False, "message": msg or "连接失败"})

@@ -1,0 +1,332 @@
+﻿<!--
+  鍗庡皵琛楄闂绘帴鍙ｆ祴璇?- Card + 娣辫壊妯″紡锛屼笌璧勪骇鏇茬嚎椤佃鑼冧竴鑷?-->
+<script setup lang="ts">
+import { ref, computed } from "vue";
+import {
+  ElCard,
+  ElSelect,
+  ElOption,
+  ElInput,
+  ElInputNumber,
+  ElButton,
+  ElCollapse,
+  ElCollapseItem,
+  ElForm,
+  ElFormItem,
+  ElSwitch,
+  ElMessage,
+  ElLoading,
+  ElTimeline,
+  ElTimelineItem,
+  ElTag,
+  ElLink,
+  type LoadingInstance,
+} from "element-plus";
+import { wallstreetcnTest, type WallStreetCNType } from "../api/wallstreetcn";
+
+interface ParsedItem {
+  title: string;
+  published_time: string | null;
+  summary: string;
+  url: string | null;
+  sentiment?: number;
+}
+
+const typeOptions: { value: WallStreetCNType; label: string }[] = [
+  { value: "lives", label: "瀹炴椂蹇" },
+  { value: "articles", label: "鏂囩珷" },
+  { value: "search", label: "涓偂鎼滅储" },
+  { value: "quote", label: "琛屾儏蹇収" },
+  { value: "keyword", label: "鍏抽敭璇嶆悳绱? },
+];
+
+const typeVal = ref<WallStreetCNType>("lives");
+const codeVal = ref("");
+const keywordVal = ref("");
+const limitVal = ref(10);
+const saveToDb = ref(false);
+const loading = ref(false);
+const result = ref<Record<string, unknown> | null>(null);
+let loadingInstance: LoadingInstance | null = null;
+
+const needCode = computed(() => typeVal.value === "quote");
+const needKeyword = computed(() => typeVal.value === "search" || typeVal.value === "keyword");
+
+const parsedList = computed<ParsedItem[]>(() => {
+  const r = result.value as { parsed?: ParsedItem[] } | null;
+  return r?.parsed ?? [];
+});
+
+const showTimeline = computed(
+  () => parsedList.value.length > 0 && (typeVal.value === "lives" || typeVal.value === "articles")
+);
+
+const rawJson = computed(() => {
+  if (!result.value) return "";
+  try {
+    return JSON.stringify(result.value, null, 2);
+  } catch {
+    return String(result.value);
+  }
+});
+
+function getErrorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "object" && e && "response" in e) {
+    const ax = e as { response?: { data?: { message?: string } } };
+    return ax.response?.data?.message ?? "璇锋眰澶辫触";
+  }
+  return "璇锋眰澶辫触";
+}
+
+async function handleTest() {
+  if (needCode.value && !codeVal.value.trim()) {
+    ElMessage.warning("琛屾儏蹇収闇€濉啓鑲＄エ浠ｇ爜");
+    return;
+  }
+  if (needKeyword.value && !keywordVal.value.trim()) {
+    ElMessage.warning("璇峰～鍐欏叧閿瘝");
+    return;
+  }
+  loading.value = true;
+  result.value = null;
+  loadingInstance = ElLoading.service({ lock: true, text: "姝ｅ湪璇锋眰鍗庡皵琛楄闂?API...", background: "rgba(0,0,0,0.4)" });
+  try {
+    const res = (await wallstreetcnTest({
+      type: typeVal.value,
+      code: codeVal.value.trim() || undefined,
+      keyword: keywordVal.value.trim() || undefined,
+      limit: limitVal.value,
+      save_to_db: saveToDb.value,
+    })) as { data?: Record<string, unknown> };
+    result.value = res?.data ?? null;
+    ElMessage.success("璇锋眰鎴愬姛");
+  } catch (e) {
+    const msg = getErrorMessage(e);
+    ElMessage.error(msg);
+  } finally {
+    loadingInstance?.close();
+    loadingInstance = null;
+    loading.value = false;
+  }
+}
+</script>
+
+<template>
+  <div class="wallstreet-test">
+    <h2 class="page-title">鍗庡皵琛楄闂昏偂甯傛儏鎶ユ祴璇曡彍鍗曪紙渚?Grok 鍐崇瓥鍙傝€冿級</h2>
+    <ElCard shadow="never">
+      <ElForm label-position="top" class="form-row">
+        <ElFormItem label="鎺ュ彛绫诲瀷">
+          <ElSelect v-model="typeVal" placeholder="閫夋嫨绫诲瀷" style="width: 160px">
+            <ElOption v-for="opt in typeOptions" :key="opt.value" :value="opt.value" :label="opt.label" />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem v-if="needCode" label="鑲＄エ浠ｇ爜">
+          <ElInput v-model="codeVal" placeholder="濡?600519" style="width: 140px" clearable />
+        </ElFormItem>
+        <ElFormItem v-if="needKeyword" label="鍏抽敭璇?>
+          <ElInput v-model="keywordVal" placeholder="杈撳叆鎼滅储璇? style="width: 180px" clearable />
+        </ElFormItem>
+        <ElFormItem label="Limit">
+          <ElInputNumber v-model="limitVal" :min="1" :max="100" style="width: 120px" />
+        </ElFormItem>
+        <ElFormItem label="淇濆瓨鑷虫暟鎹簱">
+          <ElSwitch v-model="saveToDb" />
+        </ElFormItem>
+        <ElFormItem label=" ">
+          <ElButton type="primary" :loading="loading" @click="handleTest">鎵ц娴嬭瘯</ElButton>
+        </ElFormItem>
+      </ElForm>
+    </ElCard>
+
+    <!-- 鏃堕棿绾匡細lives / articles 绫诲瀷 -->
+    <ElCard v-if="showTimeline" class="timeline-card" shadow="never">
+      <template #header>
+        <span>蹇鏃堕棿绾?/span>
+        <ElTag v-if="parsedList.length" size="small" type="info" class="count-tag">鍏?{{ parsedList.length }} 鏉?/ElTag>
+      </template>
+      <ElTimeline>
+        <ElTimelineItem
+          v-for="(item, idx) in parsedList"
+          :key="idx"
+          :timestamp="item.published_time || '鈥?"
+          placement="top"
+        >
+          <div class="timeline-content">
+            <div class="timeline-title">{{ item.title }}</div>
+            <p v-if="item.summary" class="timeline-summary">{{ item.summary }}</p>
+            <ElLink
+              v-if="item.url"
+              :href="item.url"
+              type="primary"
+              target="_blank"
+              rel="noopener"
+              class="timeline-link"
+            >
+              鏌ョ湅鍘熸枃
+            </ElLink>
+            <ElTag v-if="item.sentiment != null" size="small" :type="item.sentiment >= 0 ? 'success' : 'danger'" class="sentiment-tag">
+              鎯呯华 {{ item.sentiment }}
+            </ElTag>
+          </div>
+        </ElTimelineItem>
+      </ElTimeline>
+    </ElCard>
+
+    <!-- 鍏抽敭瀛楁鍗＄墖锛氶潪 lives/articles 浣嗘湁 parsed 鏃?-->
+    <ElCard
+      v-else-if="parsedList.length > 0"
+      class="fields-card"
+      shadow="never"
+    >
+      <template #header>鍏抽敭瀛楁</template>
+      <div class="field-list">
+        <div v-for="(item, idx) in parsedList" :key="idx" class="field-item">
+          <div class="field-label">鏍囬</div>
+          <div class="field-value">{{ item.title }}</div>
+          <div class="field-label">鍙戝竷鏃堕棿</div>
+          <div class="field-value">{{ item.published_time || "鈥? }}</div>
+          <div class="field-label">鎽樿</div>
+          <div class="field-value field-summary">{{ item.summary || "鈥? }}</div>
+          <div class="field-label">鏉ユ簮閾炬帴</div>
+          <div class="field-value">
+            <ElLink v-if="item.url" :href="item.url" type="primary" target="_blank" rel="noopener">鎵撳紑閾炬帴</ElLink>
+            <span v-else>鈥?/span>
+          </div>
+        </div>
+      </div>
+    </ElCard>
+
+    <!-- 鍘熷 JSON 鎶樺彔闈㈡澘 -->
+    <ElCard v-if="result" class="result-card" shadow="never">
+      <template #header>鍘熷 JSON</template>
+      <ElCollapse>
+        <ElCollapseItem title="鏌ョ湅瀹屾暣鍝嶅簲" name="raw">
+          <pre class="json-pre"><code>{{ rawJson }}</code></pre>
+        </ElCollapseItem>
+      </ElCollapse>
+    </ElCard>
+  </div>
+</template>
+
+<style scoped>
+.wallstreet-test {
+  max-width: 900px;
+}
+
+.page-title {
+  margin: 0 0 20px;
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.form-row :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.timeline-card,
+.fields-card,
+.result-card {
+  margin-top: 20px;
+}
+
+.count-tag {
+  margin-left: 8px;
+}
+
+.timeline-content {
+  padding: 4px 0;
+}
+
+.timeline-title {
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  margin-bottom: 6px;
+}
+
+.timeline-summary {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+
+.timeline-link {
+  margin-right: 8px;
+}
+
+.sentiment-tag {
+  vertical-align: middle;
+}
+
+.field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field-item {
+  padding: 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+}
+
+.field-label {
+  font-size: 0.8rem;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+
+.field-value {
+  font-size: 0.95rem;
+  color: var(--el-text-color-primary);
+  margin-bottom: 8px;
+}
+
+.field-value:last-child,
+.field-summary {
+  margin-bottom: 0;
+}
+
+.field-summary {
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.json-pre {
+  margin: 0;
+  padding: 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--el-text-color-primary);
+}
+
+@media (max-width: 480px) {
+  .form-row :deep(.el-select),
+  .form-row :deep(.el-input),
+  .form-row :deep(.el-input-number) {
+    width: 100% !important;
+    max-width: none;
+  }
+
+  .timeline-card :deep(.el-timeline-item__timestamp) {
+    font-size: 0.8rem;
+  }
+
+  .field-item {
+    padding: 10px;
+  }
+}
+</style>
