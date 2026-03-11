@@ -11,25 +11,18 @@ from app.database import get_database
 from app.services.portfolio_context_builder import PortfolioContextBuilder
 from app.services.llm_client import MultiLLMClient
 from app.routers.agent_prompts import get_analysis_prompt
-from app.routers.config_router import (
-    CONFIG_ID,
-    CONFIG_AGENT_ROLE,
-    PRIMARY_AI_AGENT_KEY,
-    GROK_LIST_KEY,
-    QWEN_LIST_KEY,
-    VALID_AI_AGENTS,
-    DEFAULT_AI_AGENT,
-    _normalize_ai_list,
-)
+from app.routers.config_router import CONFIG_ID, QWEN_LIST_KEY, _normalize_ai_list
 from app.agent_config import get_agent_config
 from app.config import llm_settings
 from app.utils.logger import logger
+
+ANALYSIS_MODEL = "qwen3-max"  # 投资组合分析强制使用 Qwen 最强推理模型
 
 
 def _parse_json_from_response(raw: str) -> dict | None:
     """
     从 LLM 返回内容中安全解析 JSON。
-    支持：纯 JSON、Markdown ```json ... ```、前后缀文本。
+    支持：markdown 代码块、<thinking> 后的 JSON、前后缀文本、尾部逗号修复。
     """
     if not raw or not isinstance(raw, str):
         return None
@@ -37,30 +30,72 @@ def _parse_json_from_response(raw: str) -> dict | None:
     if not s:
         return None
 
-    # 1. 尝试 Markdown 代码块
+    def _try_parse(text: str) -> dict | None:
+        if not text or not text.strip():
+            return None
+        t = text.strip()
+        # 修复常见问题：尾部逗号、单引号键名
+        t = re.sub(r",\s*}", "}", t)
+        t = re.sub(r",\s*]", "]", t)
+        try:
+            return json.loads(t)
+        except json.JSONDecodeError:
+            pass
+        return None
+
+    # 1. 移除 <thinking>...</thinking> 等推理块（qwen3-max 可能输出）
+    for tag in (r"<thinking>[\s\S]*?</thinking>", r"<reasoning>[\s\S]*?</reasoning>", r"<thought>[\s\S]*?</thought>"):
+        s = re.sub(tag, "", s, flags=re.IGNORECASE)
+
+    # 2. Markdown ```json ... ``` 或 ``` ... ```
     match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", s)
     if match:
-        try:
-            return json.loads(match.group(1).strip())
-        except (json.JSONDecodeError, ValueError):
-            pass
+        parsed = _try_parse(match.group(1))
+        if parsed:
+            return parsed
 
-    # 2. 尝试 { ... } 块
-    match = re.search(r"\{[\s\S]*\}", s)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except (json.JSONDecodeError, ValueError):
-            pass
+    # 3. 找第一个 { 到最后一个 } 的完整块（兼容前后有中文说明）
+    start = s.find("{")
+    end = s.rfind("}")
+    if start >= 0 and end > start:
+        block = s[start : end + 1]
+        parsed = _try_parse(block)
+        if parsed:
+            return parsed
 
-    # 3. 直接解析
-    try:
-        return json.loads(s)
-    except (json.JSONDecodeError, ValueError):
-        pass
+    # 4. 直接解析全文
+    parsed = _try_parse(s)
+    if parsed:
+        return parsed
 
-    logger.warning("portfolio_analyzer: failed to parse JSON from response, len=%d", len(s))
+    logger.warning("portfolio_analyzer: failed to parse JSON, len=%d, preview=%s", len(s), repr(s[:200]))
     return None
+
+
+def _validate_and_normalize_analysis(parsed: dict, total_value: float) -> dict:
+    """
+    校验并规范化分析结果：reason 必须是字符串，disclaimer 固定中文，amount 限制。
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+    out = dict(parsed)
+
+    # reason 必须是字符串
+    reason_val = out.get("reason")
+    if reason_val is not None and not isinstance(reason_val, str):
+        out["reason"] = json.dumps(reason_val, ensure_ascii=False) if isinstance(reason_val, dict) else str(reason_val)
+
+    # disclaimer 固定
+    out["disclaimer"] = "本分析仅供参考，不构成投资建议，投资有风险，请自行决策。"
+
+    # amount 不得超过 total_value * 0.5
+    if total_value and total_value > 0:
+        amt = out.get("amount")
+        if isinstance(amt, (int, float)) and amt > total_value * 0.5:
+            out["amount"] = round(total_value * 0.5, 2)
+            logger.warning("portfolio_analyzer: amount 超过限制已修正为 total_value*0.5")
+
+    return out
 
 
 def get_portfolio_analyzer() -> "PortfolioAnalyzer":
@@ -71,9 +106,7 @@ def get_portfolio_analyzer() -> "PortfolioAnalyzer":
 class PortfolioAnalyzer:
     """
     投资组合分析器。
-
-    构建 portfolio_context，生成提示词，调用 LLM 生成分析，解析 JSON 返回。
-    使用 DB 配置的 primary_ai_agent、Token、选中的模型；支持 model_type 覆盖。
+    强制使用 qwen3-max 保证分析质量，支持 JSON 解析重试与 schema 校验。
     """
 
     def __init__(self) -> None:
@@ -87,72 +120,54 @@ class PortfolioAnalyzer:
     ) -> dict:
         """
         对指定用户投资组合进行 AI 分析。
-
-        Args:
-            user_id: 用户 ID，用于 context 与风险偏好。
-            model_type: LLM 提供商（grok/qwen）。为 None 时使用 config 或 DB primary_ai_agent。
-
-        Returns:
-            包含以下 key 的 dict:
-            - analysis: 解析后的 LLM 分析结果（符合 fund_analyst_prompt 的 JSON schema），
-                        解析失败时为 {"error": str, "raw": str}
-            - raw_context: 原始 portfolio_context（用于调试/审计）
-            - timestamp: 分析完成时间 ISO8601
-            - model: 实际使用的模型名
-            - provider: 实际使用的提供商
+        强制使用 qwen3-max 模型，保证推理质量与 grounding。
         """
         timestamp = datetime.utcnow().isoformat() + "Z"
 
         try:
-            # 1. 构建上下文
             context = await self._context_builder.build_context(user_id)
-            logger.info("PortfolioAnalyzer: built context for user_id=%s", user_id)
+            news_count = len(context.get("recent_news") or [])
+            # 粗略估算 context tokens（约 4 字符/token）
+            context_str = json.dumps(context, ensure_ascii=False)
+            approx_tokens = len(context_str) // 4
+            logger.info(
+                "Using Qwen3-Max strongest model | Context tokens: ~%d | News referenced: %d",
+                approx_tokens, news_count,
+            )
 
-            # 2. 获取 provider（model_type 为 provider）
             db = await get_database()
             tokens_doc = await db["config"].find_one({"_id": CONFIG_ID}) or {}
-            provider = (model_type or "").strip().lower()
-            if not provider or provider not in VALID_AI_AGENTS:
-                provider = (
-                    tokens_doc.get(PRIMARY_AI_AGENT_KEY) or llm_settings.LLM_PROVIDER or "qwen"
-                ).strip().lower()
-            if provider not in VALID_AI_AGENTS:
-                provider = DEFAULT_AI_AGENT
-
-            # 3. 获取 Token 与模型配置
-            if provider == "grok":
-                lst = _normalize_ai_list(tokens_doc, GROK_LIST_KEY, "grok_api")
-            else:
-                lst = _normalize_ai_list(tokens_doc, QWEN_LIST_KEY, "qwen_api")
+            # 投资组合分析强制使用 qwen + qwen3-max
+            provider = "qwen"
+            lst = _normalize_ai_list(tokens_doc, QWEN_LIST_KEY, "qwen_api")
 
             if not lst or not lst[0].get("token"):
                 return {
                     "analysis": {
-                        "error": "请先在 Token 配置中为该 Agent 添加 API Key",
+                        "error": "请先在 Token 配置中为 Qwen 添加 API Key",
                         "raw": "",
                     },
                     "raw_context": context,
                     "timestamp": timestamp,
-                    "model": "",
+                    "model": ANALYSIS_MODEL,
                     "provider": provider,
                 }
 
             token_val = lst[0]["token"].strip()
-            role_config = await db["config"].find_one({"_id": CONFIG_AGENT_ROLE}) or {}
-            selected_model = (role_config.get(f"selected_{provider}_model") or "").strip() or None
             cfg = get_agent_config(provider) or {}
-            model_param = selected_model or cfg.get("model") or llm_settings.DEFAULT_MODEL
+            model_param = ANALYSIS_MODEL
             api_url = cfg.get("url") or ""
             base_url = api_url.replace("/chat/completions", "").rstrip("/") if api_url else None
 
-            # 4. 生成提示词
             prompt = await get_analysis_prompt(context, model_type=provider)
             messages = [
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": "请基于上述 portfolio_context 给出投资建议，仅返回 JSON。"},
+                {
+                    "role": "user",
+                    "content": "请基于上述 portfolio_context 给出投资建议。你必须只输出一个纯 JSON 对象（以 { 开头、以 } 结尾），不要输出任何解释、markdown 代码块、或前后缀文字。",
+                },
             ]
 
-            # 5. 调用 LLM
             result = await self._llm_client.generate_response(
                 messages=messages,
                 model=model_param,
@@ -171,14 +186,24 @@ class PortfolioAnalyzer:
                     },
                     "raw_context": context,
                     "timestamp": timestamp,
-                    "model": model_param or "",
+                    "model": model_param,
                     "provider": provider,
                 }
 
             content = result.get("content", "")
             parsed = _parse_json_from_response(content)
-            used_model = result.get("model", model_param or "")
-            used_provider = result.get("provider", provider)
+
+            # 解析失败时重试一次（strip 常见前缀）
+            if parsed is None and content:
+                for prefix in ("分析结果：", "建议：", "根据分析，", "```json\n", "```"):
+                    stripped = content.strip()
+                    if stripped.startswith(prefix):
+                        stripped = stripped[len(prefix):].strip()
+                    if stripped.endswith("```"):
+                        stripped = stripped[:-3].strip()
+                    parsed = _parse_json_from_response(stripped)
+                    if parsed:
+                        break
 
             if parsed is None:
                 return {
@@ -188,16 +213,19 @@ class PortfolioAnalyzer:
                     },
                     "raw_context": context,
                     "timestamp": timestamp,
-                    "model": used_model,
-                    "provider": used_provider,
+                    "model": model_param,
+                    "provider": provider,
                 }
 
+            total_value = float((context.get("asset_summary") or {}).get("total_value") or 0)
+            normalized = _validate_and_normalize_analysis(parsed, total_value)
+
             return {
-                "analysis": parsed,
+                "analysis": normalized,
                 "raw_context": context,
                 "timestamp": timestamp,
-                "model": used_model,
-                "provider": used_provider,
+                "model": result.get("model", model_param),
+                "provider": provider,
             }
 
         except Exception as e:

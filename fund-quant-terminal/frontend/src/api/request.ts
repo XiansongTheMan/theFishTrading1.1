@@ -86,6 +86,9 @@ function hideLoading(config: InternalAxiosRequestConfig): void {
 
 request.interceptors.request.use(
   (config) => {
+    if (config.url?.includes("analyze-portfolio")) {
+      console.log("[API] analyze-portfolio 请求，超时:", config.timeout ?? "默认", "ms");
+    }
     showLoading(config);
     return config;
   },

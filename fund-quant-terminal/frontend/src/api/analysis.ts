@@ -24,5 +24,6 @@ export interface AnalyzePortfolioResponse {
   provider?: string;
 }
 
+/** POST /analyze-portfolio，超时 90 秒（LLM 分析耗时较长） */
 export const analyzePortfolio = (params?: { user_id?: string; model_type?: string }) =>
-  request.post<{ data: AnalyzePortfolioResponse }>("/analyze-portfolio", params ?? {});
+  request.post<{ data: AnalyzePortfolioResponse }>("/analyze-portfolio", params ?? {}, { timeout: 90000 });

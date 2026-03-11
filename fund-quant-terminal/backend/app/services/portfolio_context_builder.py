@@ -25,6 +25,12 @@ HS300_SYMBOL = "000300"
 FUND_INDEX_SYMBOL = "000011"  # 上证基金指数
 
 
+def _get_data_service() -> DataFetcherService:
+    """获取已配置 tokens 的共享 DataFetcherService（含 DB 更新的 tushare/akshare 配置）"""
+    from app.routers.data import data_service
+    return data_service
+
+
 class PortfolioContextOutput(BaseModel):
     """PortfolioContextBuilder 输出结构（用于类型校验与文档）"""
 
@@ -113,12 +119,12 @@ async def _fetch_market_snapshot(
     data_service: DataFetcherService,
 ) -> Dict[str, Any]:
     """
-    获取沪深300、基金指数最新日线数据作为市场快照。
-    使用 AKShare/Tushare，取最近 5 个交易日中最新一条。
+    获取沪深300(000300)、上证基金指数(000011)最新日线数据。
+    使用共享 data_service（AKShare/Tushare），确保获取真实数据并记录日志。
     """
     today = datetime.now().strftime("%Y-%m-%d")
     start_date = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
-    snapshot: Dict[str, Any] = {"indices": [], "_error": None}
+    indices: List[Dict[str, Any]] = []
 
     for symbol, name in [(HS300_SYMBOL, "沪深300"), (FUND_INDEX_SYMBOL, "上证基金指数")]:
         try:
@@ -128,36 +134,46 @@ async def _fetch_market_snapshot(
                 end=today,
             )
             if not rows:
-                snapshot["indices"].append({
+                logger.warning("_fetch_market_snapshot %s(%s) 无数据，跳过", name, symbol)
+                indices.append({
                     "symbol": symbol,
                     "name": name,
                     "date": None,
                     "close": None,
                     "change_pct": None,
+                    "_error": "无日线数据",
                 })
                 continue
-            # 按日期降序取最新
             sorted_rows = sorted(
                 rows,
-                key=lambda r: (r.get("date") or r.get("trade_date") or ""),
+                key=lambda r: str(r.get("date") or r.get("trade_date") or ""),
                 reverse=True,
             )
             latest = sorted_rows[0]
             date_val = latest.get("date") or latest.get("trade_date")
             close_val = latest.get("close")
             if close_val is None:
-                close_val = latest.get("收盘价") or latest.get("收盘")
-            change_val = latest.get("pct_chg") or latest.get("涨跌幅")
-            snapshot["indices"].append({
+                close_val = latest.get("收盘价") or latest.get("收盘") or latest.get("收")
+            change_val = latest.get("pct_chg") or latest.get("涨跌幅") or latest.get("change_pct")
+            if change_val is None and "幅度" in latest:
+                change_val = latest.get("幅度")
+            close_float = float(close_val) if close_val is not None else None
+            change_float = float(change_val) if change_val is not None else None
+            idx = {
                 "symbol": symbol,
                 "name": name,
                 "date": str(date_val) if date_val else None,
-                "close": float(close_val) if close_val is not None else None,
-                "change_pct": float(change_val) if change_val is not None else None,
-            })
+                "close": close_float,
+                "change_pct": change_float,
+            }
+            indices.append(idx)
+            logger.info(
+                "market_snapshot 已获取: %s %s date=%s close=%s change_pct=%s",
+                name, symbol, idx["date"], idx["close"], idx["change_pct"],
+            )
         except Exception as e:
-            logger.warning("_fetch_market_snapshot 指数 %s 获取失败: %s", symbol, e)
-            snapshot["indices"].append({
+            logger.warning("_fetch_market_snapshot 指数 %s(%s) 获取失败: %s", name, symbol, e)
+            indices.append({
                 "symbol": symbol,
                 "name": name,
                 "date": None,
@@ -165,10 +181,8 @@ async def _fetch_market_snapshot(
                 "change_pct": None,
                 "_error": str(e),
             })
-            if not snapshot.get("_error"):
-                snapshot["_error"] = str(e)
 
-    return snapshot
+    return {"indices": indices}
 
 
 async def _fetch_risk_profile(db: AsyncIOMotorDatabase, user_id: str) -> str:
@@ -178,7 +192,6 @@ async def _fetch_risk_profile(db: AsyncIOMotorDatabase, user_id: str) -> str:
     """
     valid_profiles = ("conservative", "moderate", "aggressive")
     try:
-        # 用户专属
         doc = await db[CONFIG_COLLECTION].find_one({
             "_id": f"{RISK_PROFILE_USER_PREFIX}{user_id}"
         })
@@ -187,13 +200,11 @@ async def _fetch_risk_profile(db: AsyncIOMotorDatabase, user_id: str) -> str:
             if profile in valid_profiles:
                 return profile
 
-        # 默认文档
         doc = await db[CONFIG_COLLECTION].find_one({"_id": RISK_PROFILE_DOC_ID})
         if doc:
             default = (doc.get("default") or doc.get("profile") or "").strip().lower()
             if default in valid_profiles:
                 return default
-            # 用户级嵌套
             users = doc.get("user_profiles") or {}
             up = (users.get(user_id) or "").strip().lower()
             if up in valid_profiles:
@@ -212,14 +223,11 @@ class PortfolioContextBuilder:
     """
     投资组合上下文构建器。
 
-    聚合资产汇总、华尔街见闻近期新闻、沪深300/基金指数市场快照、
+    聚合资产汇总、华尔街见闻近期新闻、沪深300/上证基金指数市场快照、
     用户风险偏好，供 AI 决策或前端展示使用。
-
-    使用 Depends(get_portfolio_context_builder) 注入。
     """
 
     def __init__(self) -> None:
-        self._data_service = DataFetcherService()
         self._wallstreetcn_service = WallStreetCNService()
 
     async def build_context(self, user_id: str) -> dict:
@@ -227,25 +235,20 @@ class PortfolioContextBuilder:
         构建完整的投资组合上下文。
 
         Args:
-            user_id: 用户 ID，用于风险偏好查询；当前资产汇总为全局，未来可扩展按 user 过滤。
+            user_id: 用户 ID，用于风险偏好查询。
 
         Returns:
-            包含以下 key 的 dict:
-            - asset_summary: 资产汇总 {capital, holdings, holdings_value, total_value}
-            - recent_news: 近期新闻列表，每项 {title, content, sentiment}
-            - market_snapshot: 市场快照 {indices: [{symbol, name, date, close, change_pct}]}
-            - timestamp: 构建时间 ISO8601
-            - risk_profile: 风险偏好 conservative | moderate | aggressive
+            asset_summary, recent_news, market_snapshot, timestamp, risk_profile
         """
         from app.database import get_database as _get_db
         db = await _get_db()
+        data_service = _get_data_service()
 
         timestamp = datetime.utcnow().isoformat() + "Z"
 
-        # 并行获取各数据源
         asset_task = _fetch_asset_summary(db)
         news_task = _fetch_recent_news(self._wallstreetcn_service, limit=10)
-        market_task = _fetch_market_snapshot(self._data_service)
+        market_task = _fetch_market_snapshot(data_service)
         risk_task = _fetch_risk_profile(db, user_id)
 
         asset_summary, recent_news, market_snapshot, risk_profile = await asyncio.gather(

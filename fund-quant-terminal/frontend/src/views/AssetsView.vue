@@ -412,8 +412,10 @@ function copyGrokPromptToClipboard() {
 
 // [+ 一键 AI 分析]
 async function handleAiAnalyze() {
+  console.log("分析请求发送，超时设置为 90 秒");
   analyzeLoading.value = true;
   analysisResult.value = null;
+  ElMessage.info("AI 分析正在进行，请耐心等待 30-60 秒...");
   try {
     const user_id = "default"; // store 无 user_id，使用 default
     const res = (await analyzePortfolio({ user_id })) as { data?: AnalyzePortfolioResponse };
@@ -424,7 +426,12 @@ async function handleAiAnalyze() {
       ElMessage.success("AI 分析完成");
     }
   } catch (e) {
-    ElMessage.error((e as Error)?.message ?? "AI 分析失败");
+    const err = e as Error & { response?: { status?: number }; message?: string };
+    if (err.response?.status === 0 || err.message?.includes("timeout")) {
+      ElMessage.error("分析超时，请检查网络或稍后重试。建议使用更快的模型（如 grok-fast）。");
+    } else {
+      ElMessage.error(err?.message ?? "AI 分析失败");
+    }
   } finally {
     analyzeLoading.value = false;
   }

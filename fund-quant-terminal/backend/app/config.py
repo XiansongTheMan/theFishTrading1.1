@@ -79,13 +79,13 @@ class LLMSettings(BaseSettings):
     QWEN_API_KEY: str = ""
     QWEN_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    # 默认模型与生成参数
-    DEFAULT_MODEL: str = "grok-4-fast-reasoning"
+    # Qwen 最强推理模型（2026 旗舰版），支持复杂基金分析与 grounding
+    DEFAULT_MODEL: str = "qwen3-max"
     DEFAULT_TEMPERATURE: float = 0.2
     MAX_TOKENS: int = 2000
 
     # 默认 LLM 提供商：grok 或 qwen
-    LLM_PROVIDER: str = "grok"
+    LLM_PROVIDER: str = "qwen"
 
     # 代理支持，留空则使用系统/环境变量
     HTTP_PROXY: str = ""

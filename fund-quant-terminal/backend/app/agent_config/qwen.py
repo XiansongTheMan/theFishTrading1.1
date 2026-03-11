@@ -6,10 +6,10 @@ from urllib.error import HTTPError, URLError
 
 from .common import build_messages
 
-# 通义千问 API 配置：接口地址、默认模型、最大 token、对话/测试超时（秒）
+# 通义千问 API 配置：接口地址、默认模型（qwen3-max 为最强推理）、最大 token、对话/测试超时（秒）
 QWEN_CONFIG = {
     "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-    "model": "qwen-max",
+    "model": "qwen3-max",
     "max_tokens": 2000,
     "timeout_chat": 60,
     "timeout_test": 15,
@@ -25,6 +25,7 @@ QWEN_MODELS = [
     {"value": "qwen-plus", "label": "qwen-plus"},
     {"value": "qwen-plus-latest", "label": "qwen-plus-latest"},
     {"value": "qwen3.5-plus", "label": "qwen3.5-plus"},
+    {"value": "qwen3-max", "label": "qwen3-max（最强推理，推荐）"},
     {"value": "qwen-max", "label": "qwen-max"},
     {"value": "qwen-max-latest", "label": "qwen-max-latest"},
     {"value": "qwen-long", "label": "qwen-long（长文本）"},
