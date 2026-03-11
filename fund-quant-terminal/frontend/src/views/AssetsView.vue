@@ -32,9 +32,12 @@ import {
   type Asset,
   type AssetsSummary,
 } from "../api/assets";
+import { analyzePortfolio, type AnalyzePortfolioResponse } from "../api/analysis";
+import { logDecision } from "../api/decisions";
 import { getFundInfo, getStockInfo } from "../api/data";
 import { fetchGrokDecision, type GrokDecisionNewsItem } from "../api/grok";
 import { useAppStore } from "../stores/app";
+import AnalysisResultPanel from "../components/AnalysisResultPanel.vue";
 import { fetchExportData, exportToExcel, exportToPdf } from "../utils/export";
 import { withFeedback } from "../utils/feedback";
 
@@ -365,6 +368,10 @@ const grokDecisionLoading = ref(false);
 const grokDecisionFundCode = ref("");
 const grokDecisionPrompt = ref("");
 const grokDecisionNews = ref<GrokDecisionNewsItem[]>([]);
+
+// [+ 一键 AI 分析]
+const analyzeLoading = ref(false);
+const analysisResult = ref<AnalyzePortfolioResponse | null>(null);
 async function openGrokDecisionModal() {
   grokDecisionModalVisible.value = true;
   const firstFund = summary.value?.holdings?.find((h) => (h.asset_type || "fund") === "fund");
@@ -401,6 +408,46 @@ function copyGrokPromptToClipboard() {
     () => ElMessage.success("已复制到剪贴板，可粘贴给 Grok"),
     () => ElMessage.error("复制失败")
   );
+}
+
+// [+ 一键 AI 分析]
+async function handleAiAnalyze() {
+  analyzeLoading.value = true;
+  analysisResult.value = null;
+  try {
+    const user_id = "default"; // store 无 user_id，使用 default
+    const res = (await analyzePortfolio({ user_id })) as { data?: AnalyzePortfolioResponse };
+    analysisResult.value = res?.data ?? null;
+    if (analysisResult.value?.analysis?.error) {
+      ElMessage.warning(analysisResult.value.analysis.error);
+    } else {
+      ElMessage.success("AI 分析完成");
+    }
+  } catch (e) {
+    ElMessage.error((e as Error)?.message ?? "AI 分析失败");
+  } finally {
+    analyzeLoading.value = false;
+  }
+}
+
+async function handleApplyToLog() {
+  const a = analysisResult.value?.analysis;
+  if (!a?.fund_code || !a?.action) {
+    ElMessage.warning("分析结果不完整，无法应用");
+    return;
+  }
+  try {
+    await logDecision({
+      user_action: a.action,
+      fund_code: a.fund_code.trim().split(".")[0].padStart(6, "0"),
+      amount_rmb: a.amount ?? undefined,
+      grok_response: a.reason ?? undefined,
+    });
+    ElMessage.success("已添加到决策日志");
+    await loadSummary();
+  } catch (e) {
+    ElMessage.error((e as Error)?.message ?? "应用失败");
+  }
 }
 
 async function handleSync() {
@@ -472,6 +519,10 @@ onMounted(loadSummary);
         <ElButton type="success" size="small" @click="openGrokDecisionModal" style="margin-left: 8px">
           一键收集资讯并生成Grok决策
         </ElButton>
+        <!-- [+ 一键 AI 分析] -->
+        <ElButton type="primary" size="large" :loading="analyzeLoading" @click="handleAiAnalyze" style="margin-left: 8px">
+          一键 AI 分析
+        </ElButton>
       </template>
       <div class="table-scroll-x">
       <ElTable
@@ -529,6 +580,12 @@ onMounted(loadSummary);
         <span>持仓市值：{{ summary.holdings_value?.toFixed(2) ?? "0.00" }} 元</span>
         <span>总资产：{{ summary.total_value?.toFixed(2) ?? "0.00" }} 元</span>
       </div>
+      <!-- [+ AI 分析结果面板] -->
+      <AnalysisResultPanel
+        v-if="analysisResult"
+        :analysis-result="analysisResult"
+        @apply-to-log="handleApplyToLog"
+      />
     </ElCard>
 
     <ElDialog

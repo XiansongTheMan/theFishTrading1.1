@@ -1,9 +1,6 @@
-Grok 4.2 用户请立即、完整、优先阅读项目根目录的 GROK_ROLE_PROMPT.md
-（本文件定义了Grok在本项目的专属角色与全部工作流）
-
 # Fund Quant Terminal - 基金量化终端
 
-生产级基金量化终端，支持 AKShare/Tushare 数据、决策日志、资产曲线，为未来与 Grok 4.2 衔接预留接口。
+生产级基金量化终端，支持 AKShare/Tushare 数据、决策日志、资产曲线。**默认使用 Qwen 大模型**，支持 Grok 等可选模型（通过 Token 配置切换）。
 
 ---
 
@@ -64,11 +61,12 @@ npm run dev
 |------|------|
 | POST `/api/data/fetch` | 拉取基金净值(nav)、基金列表(list)、Tushare 信息(info) |
 | GET `/api/data/history` | 基金净值历史，支持日期和条数限制 |
-| POST `/api/wallstreetcn/test` | 华尔街见闻接口测试。**Body**: `{ type, code?, keyword?, limit?, channel?, cursor?, save_to_db? }`。`type` 可选: `lives`(实时快讯)、`articles`(文章)、`search`(个股搜索)、`quote`(行情快照，需 `code`)、`keyword`(关键词搜索，需 `keyword`)。返回原始 JSON 及解析字段(title、published_time、summary、url、sentiment)。供 Grok 决策参考的股市情报来源。 |
+| POST `/api/wallstreetcn/test` | 华尔街见闻接口测试。**Body**: `{ type, code?, keyword?, limit?, channel?, cursor?, save_to_db? }`。`type` 可选: `lives`(实时快讯)、`articles`(文章)、`search`(个股搜索)、`quote`(行情快照，需 `code`)、`keyword`(关键词搜索，需 `keyword`)。返回原始 JSON 及解析字段(title、published_time、summary、url、sentiment)。供 AI 决策参考的股市情报来源。 |
+| POST `/api/analyze-portfolio` | 一键 AI 分析。**Body**: `{ user_id?, model_type? }`。聚合资产汇总、近期新闻、市场快照、风险偏好，调用 Qwen/Grok 生成结构化投资建议（fund_code、action、amount、reason 等）。前端资产配置页「一键 AI 分析」调用此接口。 |
 
 ---
 
-## 三、如何记录一次 Grok 决策
+## 三、如何记录一次 AI 决策
 
 ### 步骤
 
@@ -77,8 +75,8 @@ npm run dev
 3. 填写表单：
    - **基金代码**：必填，如 `000001`
    - **用户动作**：买入 / 卖出 / 持有
-   - **Grok 输入**：发送给 Grok 的提示内容
-   - **Grok 建议**：Grok 的回复或建议
+   - **Grok 输入**：发送给 AI 的提示内容
+   - **Grok 建议**：AI 的回复或建议
    - **交易金额**、**净值**、**手续费**、**盈亏**：按实际填写
    - **交易前/后资金**：可选，用于记录资金变动
    - **备注**：补充说明
@@ -88,23 +86,29 @@ npm run dev
 
 ---
 
-## 四、与 Grok 4.2 衔接方式（Grok 协作指南）
+## 四、一键 AI 分析（投资组合分析）
 
-> **重要**：请优先阅读 [GROK_ROLE_PROMPT.md](../GROK_ROLE_PROMPT.md)（项目根目录），该文件定义了 Grok 的强制系统角色提示词。
+在 **资产配置** 页面点击「一键 AI 分析」，系统将：
+
+1. 聚合当前资产汇总、近期新闻（华尔街见闻）、市场快照（沪深300、基金指数）、用户风险偏好  
+2. 调用 LLM（默认 Qwen，可配置 Grok）生成结构化投资建议  
+3. 展示分析结果（基金代码、建议操作、金额、止盈止损、置信度、风险等级、分析理由）  
+4. 支持「应用到决策日志」一键写入决策记录  
+
+需在 **Token 配置** 中为对应 Agent（Qwen/Grok）添加 API Key。
+
+---
+
+## 五、决策记录与 AI 协作
 
 ### 工作流建议
 
-1. 在 Grok 4.2 中完成分析和决策  
+1. 使用 **一键 AI 分析** 或 Agent 连接测试完成分析和决策  
 2. 打开 **决策日志** 页面，点击 **新增决策**  
-3. 从 Grok 对话中复制：
+3. 从 AI 对话或分析结果中复制：
    - 输入问题 → 填入「Grok 输入」
    - 建议内容 → 填入「Grok 建议」
 4. 填写基金代码、动作、金额等后提交  
-
-### 未来扩展
-
-- **复制最新记录给我（Grok 4.2）**：打开决策日志页面，找到最新一条记录，将「Grok 输入」和「Grok 建议」复制给 Grok 作为上下文，或复制整条 JSON 数据
-- **API 对接**：后续可增加 Grok API 调用，将决策表单自动写入并同步到 Grok  
 
 ### 数据格式示例
 
@@ -121,7 +125,7 @@ npm run dev
 
 ---
 
-## 五、项目结构
+## 六、项目结构
 
 ```
 fund-quant-terminal/
@@ -131,8 +135,9 @@ fund-quant-terminal/
 │   │   ├── config.py
 │   │   ├── database.py      # MongoDB + 索引
 │   │   ├── models/
+│   │   ├── prompts/           # 系统提示词（如 fund_analyst_prompt.md）
 │   │   ├── routers/
-│   │   ├── services/
+│   │   ├── services/          # PortfolioContextBuilder、PortfolioAnalyzer 等
 │   │   └── schemas/
 │   ├── requirements.txt
 │   └── .env.example
@@ -144,7 +149,7 @@ fund-quant-terminal/
 
 ---
 
-## 六、环境变量
+## 七、环境变量
 
 复制 `backend/.env.example` 为 `backend/.env`：
 
@@ -156,10 +161,13 @@ fund-quant-terminal/
 | APP_DEBUG | 调试模式 | true |
 | APP_HOST / APP_PORT | 服务地址 | 0.0.0.0:8000 |
 | CORS_ORIGINS | 允许的前端源 | localhost:5173 |
+| LLM_PROVIDER | 默认 LLM 提供商 | grok（可改为 qwen） |
+| QWEN_API_KEY | 通义千问 API Key（Qwen） | 空 |
+| GROK_API_KEY | Grok API Key | 空 |
 
 ---
 
-## 七、API 一览
+## 八、API 一览
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -169,31 +177,33 @@ fund-quant-terminal/
 | POST | `/api/assets/update` | 更新资产 |
 | POST | `/api/data/fetch` | 拉取数据 |
 | GET | `/api/data/history` | 历史数据 |
-| POST | `/api/wallstreetcn/test` | 华尔街见闻接口测试（快讯/文章/搜索/行情/关键词，供 Grok 决策参考） |
+| POST | `/api/wallstreetcn/test` | 华尔街见闻接口测试（快讯/文章/搜索/行情/关键词） |
+| POST | `/api/analyze-portfolio` | 投资组合 AI 分析（聚合资产、新闻、市场，返回结构化建议） |
 | GET | `/api/grok-prompt` | 获取 Grok 提示词（最新或指定版本） |
 | POST | `/api/grok-prompt` | 保存新版本 |
 | GET | `/api/grok-prompt/history` | 历史版本列表 |
 
 ---
 
-## 八、功能特性
+## 九、功能特性
 
 - **自动索引**：后端启动时为 `decision_logs`、`assets` 创建索引  
 - **60 秒刷新**：前端每 60 秒刷新资产与决策数据  
+- **一键 AI 分析**：资产配置页聚合持仓、新闻、市场指数，调用 Qwen/Grok 生成投资建议，可应用到决策日志  
 - **资产曲线**：绿/红区分盈利与亏损  
 - **深色模式**：在设置中切换  
 
 ---
 
-## 九、Agent 角色设定与 /agent-prompts-test
+## 十、Agent 角色设定与 /agent-prompts-test
 
-Agent 角色设定支持 Grok 与 Qwen 两种大模型，可通过统一聊天测试接口 `/api/agent-prompts-test` 进行连接与对话测试。
+Agent 角色设定支持 **Qwen**（默认）与 **Grok** 两种大模型，可通过统一聊天测试接口 `/api/agent-prompts-test` 进行连接与对话测试。
 
 ### 功能说明
 
-- 在 **Agent 角色设定** 页面可切换 Grok / Qwen，配置角色模板与模型
+- 在 **Agent 角色设定** 页面可切换 Qwen / Grok，配置角色模板与模型
 - 使用 **连接测试** 或 **chat 测试** 验证 API Key 与模型是否可用
-- **Token 配置** 中需先添加对应 Agent 的 API Key（Grok 在 console.x.ai 获取，Qwen 在 dashscope.console.aliyun.com 获取）
+- **Token 配置** 中需先添加对应 Agent 的 API Key（Qwen 在 dashscope.console.aliyun.com 获取，Grok 在 console.x.ai 获取）
 
 ### 接口示例
 
@@ -229,6 +239,14 @@ curl -X POST "http://localhost:8000/api/agent-prompts-test" \
 ```
 
 失败时 `ok` 为 `false`，`content` 与 `error` 为错误信息。
+
+### 一键 AI 分析接口示例
+
+```bash
+curl -X POST "http://localhost:8000/api/analyze-portfolio" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"default","model_type":"qwen"}'
+```
 
 ---
 

@@ -52,9 +52,6 @@ class Settings(BaseSettings):
     # 财联社 RSS 基地址（RSSHub），当 CAILIANSHERSS_SOURCE=rsshub 时使用
     CAILIANSHERSS_RSS_BASE_URL: str = "https://rsshub.app"
 
-    # 第一财经快讯 RSS（官方 feed）
-    YICAI_RSS_URL: str = "https://www.yicai.com/feed/"
-
     @property
     def cors_origins_list(self) -> List[str]:
         """解析 CORS 源列表"""

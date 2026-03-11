@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import close_database, get_database
 from app.utils.logger import logger
-from app.routers import agent_prompts, assets, cailianshe, config_router, data, decisions, eastmoney, grok, mongo, sina, wallstreetcn, yicai
+from app.routers import agent_prompts, assets, cailianshe, config_router, data, decisions, eastmoney, grok, mongo, sina, wallstreetcn
 from app.routers.news import router as news_router
 from app.schemas.response import api_success
 
@@ -241,11 +241,32 @@ app.include_router(news_router, prefix="/api/news", tags=["news"])
 app.include_router(grok.router, prefix="/api", tags=["Grok"])
 app.include_router(config_router.router, prefix="/api", tags=["配置"])
 app.include_router(agent_prompts.router, prefix="/api", tags=["Agent 角色设定"])
+# analysis 路由改由下方直接注册，避免 include_router 未生效
 app.include_router(wallstreetcn.router, prefix="/api/wallstreetcn", tags=["华尔街见闻"])
 app.include_router(eastmoney.router, prefix="/api/eastmoney", tags=["东方财富"])
 app.include_router(cailianshe.router, prefix="/api/cailianshe", tags=["财联社"])
-app.include_router(yicai.router, prefix="/api/yicai", tags=["第一财经"])
 app.include_router(sina.router, prefix="/api/sina", tags=["新浪财经"])
+
+# 投资组合分析：直接挂载（避免 router 加载异常时 404）
+from app.routers.analysis import AnalyzePortfolioRequest
+from app.services.portfolio_analyzer import PortfolioAnalyzer, get_portfolio_analyzer
+
+
+@app.post("/api/analyze-portfolio")
+async def analyze_portfolio(body: AnalyzePortfolioRequest | None = None, analyzer: PortfolioAnalyzer = Depends(get_portfolio_analyzer)):
+    """一键 AI 分析：聚合资产、新闻、市场，调用 LLM 生成投资建议"""
+    try:
+        b = body or AnalyzePortfolioRequest()
+        user_id = (b.user_id or "default").strip() or "default"
+        model_type = (b.model_type or "").strip() if b.model_type else None
+        result = await analyzer.analyze_portfolio(user_id=user_id, model_type=model_type)
+        return api_success(data=result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("analyze_portfolio error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # 兼容旧版 v1 路径
 app.include_router(data.router, prefix="/api/v1/data", tags=["数据-v1"])

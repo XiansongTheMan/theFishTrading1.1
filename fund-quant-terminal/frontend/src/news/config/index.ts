@@ -6,7 +6,6 @@
 import * as wallstreetcn from "./wallstreetcn";
 import * as eastmoney from "./eastmoney";
 import * as cailianshe from "./cailianshe";
-import * as yicai from "./yicai";
 
 export interface SourceOption {
   value: string;
@@ -37,10 +36,6 @@ const configMap: Record<string, SourceConfig> = {
     typeOptions: cailianshe.typeOptions,
     defaultTypeVal: cailianshe.defaultTypeVal,
   },
-  yicai: {
-    typeOptions: yicai.typeOptions,
-    defaultTypeVal: yicai.defaultTypeVal,
-  },
 };
 
 /** 一级 Tab - 新闻源选项 */
@@ -48,7 +43,6 @@ export const sourceOptions: SourceOption[] = [
   { value: "wallstreetcn", label: "华尔街见闻" },
   { value: "eastmoney", label: "东方财富" },
   { value: "cailianshe", label: "财联社" },
-  { value: "yicai", label: "第一财经" },
 ];
 
 /** 根据新闻源获取子 Tab 配置 */

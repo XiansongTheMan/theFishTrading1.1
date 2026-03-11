@@ -1,7 +1,9 @@
 # Agent role prompts API - grok/qwen multi-templates
 
 import asyncio
+import json
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -540,3 +542,67 @@ async def select_agent_template(
     except Exception as e:
         logger.exception("select_agent_template error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def get_analysis_prompt(
+    context: dict,
+    model_type: str | None = None,
+) -> str:
+    """
+    加载基金量化分析师系统提示词，并注入 portfolio_context。
+
+    Args:
+        context: 投资组合上下文 dict，需包含 asset_summary, recent_news,
+            market_snapshot, risk_profile, timestamp 等。将作为 portfolio_context 注入。
+        model_type: LLM 提供商（grok/qwen）。为 None 时使用 config.llm_settings.LLM_PROVIDER。
+
+    Returns:
+        完整系统提示词字符串，含基础角色设定与注入的 portfolio_context JSON。
+
+    Raises:
+        无主动抛出；加载失败时返回带占位符的兜底提示词并记录日志。
+    """
+    from app.config import llm_settings
+
+    provider = (model_type or "").strip().lower() or (llm_settings.LLM_PROVIDER or "qwen").strip().lower()
+    if provider not in VALID_AI_AGENTS:
+        provider = DEFAULT_AI_AGENT
+
+    prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "fund_analyst_prompt.md"
+    base_prompt = ""
+    try:
+        if prompt_path.exists():
+            base_prompt = prompt_path.read_text(encoding="utf-8").strip()
+        else:
+            logger.warning("get_analysis_prompt: prompt file not found: %s", prompt_path)
+            base_prompt = (
+                "You are an experienced Chinese fund quantitative analyst AI assistant. "
+                "Respond with ONLY a valid JSON object following the required schema."
+            )
+    except Exception as e:
+        logger.exception("get_analysis_prompt: failed to load prompt file: %s", e)
+        base_prompt = (
+            "You are an experienced Chinese fund quantitative analyst AI assistant. "
+            "Respond with ONLY a valid JSON object following the required schema."
+        )
+
+    try:
+        context_json = json.dumps(context, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError) as e:
+        logger.warning("get_analysis_prompt: context not JSON-serializable: %s", e)
+        context_json = json.dumps({"error": "invalid context"}, ensure_ascii=False)
+
+    injection = (
+        "\n\n## Portfolio Context (portfolio_context)\n\n"
+        "The following JSON is the portfolio_context you MUST analyze:\n\n"
+        "```json\n"
+        f"{context_json}\n"
+        "```\n"
+    )
+    full_prompt = base_prompt + injection
+    logger.info(
+        "get_analysis_prompt: built prompt for provider=%s, context_keys=%s",
+        provider,
+        list(context.keys()) if isinstance(context, dict) else "?",
+    )
+    return full_prompt

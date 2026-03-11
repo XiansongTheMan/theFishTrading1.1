@@ -9,7 +9,6 @@ import { sourceOptions } from "@/news/config";
 import WallstreetTest from "./WallstreetTest.vue";
 import EastMoneyTest from "./EastMoneyTest.vue";
 import CailiansheTest from "./CailiansheTest.vue";
-import YicaiTest from "./YicaiTest.vue";
 
 const sourceVal = ref("wallstreetcn");
 const safeSourceOptions = computed(() => sourceOptions ?? []);
@@ -29,7 +28,6 @@ const safeSourceOptions = computed(() => sourceOptions ?? []);
           <WallstreetTest v-if="sourceVal === 'wallstreetcn'" />
           <EastMoneyTest v-else-if="sourceVal === 'eastmoney'" />
           <CailiansheTest v-else-if="sourceVal === 'cailianshe'" />
-          <YicaiTest v-else-if="sourceVal === 'yicai'" />
         </ElTabPane>
       </ElTabs>
     </ElCard>
