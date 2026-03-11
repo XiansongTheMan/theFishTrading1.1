@@ -301,9 +301,19 @@ function marketValue(row: Asset) {
 function currentProfit(row: Asset) {
   const curr = row.current_price;
   const cost = row.cost_price ?? 0;
-  if (curr == null || row.quantity == null) return "-";
+  if (curr == null || row.quantity == null) return { amount: "-", pct: null };
   const profit = (curr - cost) * row.quantity;
-  return profit >= 0 ? `+${profit.toFixed(2)}` : profit.toFixed(2);
+  const amountStr = profit >= 0 ? `+${profit.toFixed(2)}` : profit.toFixed(2);
+  const pct = cost > 0 ? (((curr - cost) / cost) * 100) : null;
+  const pctStr = pct != null ? (pct >= 0 ? `+${pct.toFixed(2)}%` : `${pct.toFixed(2)}%`) : null;
+  return { amount: amountStr, pct: pctStr };
+}
+
+/** 格式化当前收益：金额 + 百分比，用于表格显示 */
+function formatCurrentProfit(row: Asset): string {
+  const { amount, pct } = currentProfit(row);
+  if (pct) return `${amount} (${pct})`;
+  return amount;
 }
 
 function currentProfitValue(row: Asset): number | null {
@@ -483,10 +493,10 @@ onMounted(loadSummary);
             {{ row.quantity != null ? Math.round(row.quantity) : "-" }}
           </template>
         </ElTableColumn>
-        <ElTableColumn label="当前收益" width="100" align="right">
+        <ElTableColumn label="当前收益" width="130" align="right">
           <template #default="{ row }">
-            <span :class="profitCellClass(currentProfitValue(row))">
-              {{ currentProfit(row) }}
+            <span :class="profitCellClass(currentProfitValue(row))" class="profit-cell">
+              {{ formatCurrentProfit(row) }}
             </span>
           </template>
         </ElTableColumn>
@@ -731,6 +741,7 @@ onMounted(loadSummary);
 .profit-green {
   color: var(--el-color-success);
 }
+
 
 .help-content {
   line-height: 1.7;

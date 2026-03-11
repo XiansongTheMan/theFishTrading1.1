@@ -10,6 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.services.data_fetcher import DataFetcherService
 from app.utils.logger import logger
+from app.utils.prompt_utils import build_full_context_messages
 
 NEWS_COLLECTION = "news_raw"
 HOURS_WINDOW = 72
@@ -141,3 +142,24 @@ async def generate_grok_prompt(
 3. 建议仓位（如 0%-100% 或具体比例）
 4. 止损位（如适用）"""
     return prompt, news_summary
+
+
+async def build_decision_messages(
+    fund_code: str,
+    db: AsyncIOMotorDatabase,
+    provider: str,
+    include_news: bool = True,
+    custom_news_links: Optional[List[str]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    构建完整决策上下文消息，供 LLM 调用。
+    调用 prompt_utils.build_full_context_messages，返回 (messages, news_summary)。
+    """
+    messages, news_summary = await build_full_context_messages(
+        fund_code=fund_code,
+        db=db,
+        provider=provider,
+        include_news=include_news,
+        custom_news_links=custom_news_links,
+    )
+    return messages, news_summary

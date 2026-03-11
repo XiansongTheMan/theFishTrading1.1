@@ -1,4 +1,4 @@
-﻿// =====================================================
+// =====================================================
 // 璺敱閰嶇疆
 // =====================================================
 
@@ -39,7 +39,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: "/news",
     name: "News",
-    component: () => import("../views/NewsView.vue"),
+    component: () => import("../views/News/index.vue"),
     meta: { title: "甯傚満璧勮", icon: "News" },
   },
   {
@@ -81,7 +81,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: "/wallstreet-test",
     name: "WallstreetTest",
-    component: () => import("../views/WallstreetTestView.vue"),
+    component: () => import("../views/NewsInterfaceTest/index.vue"),
     meta: { title: "鍗庡皵琛楄闂昏偂甯傛儏鎶ユ祴璇曡彍鍗曪紙渚?Grok 鍐崇瓥鍙傝€冿級" },
   },
 ];

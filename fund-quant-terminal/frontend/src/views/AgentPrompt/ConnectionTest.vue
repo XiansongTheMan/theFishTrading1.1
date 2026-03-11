@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import axios from "axios";
-import { ElCard, ElButton, ElInput, ElScrollbar, ElIcon, ElMessage, ElSelect, ElOption } from "element-plus";
+import { ElCard, ElButton, ElInput, ElScrollbar, ElIcon, ElMessage, ElSelect, ElOption, ElTag, ElTooltip } from "element-plus";
 import { Loading } from "@element-plus/icons-vue";
 import { agentChatTest, listAgentTemplates } from "../../api/grok";
 import { testToken } from "../../api/config";
@@ -29,9 +29,15 @@ const chatMessages = ref<ChatMsg[]>([]);
 const connectionLoading = ref(false);
 const connectionResult = ref<{ ok: boolean; message: string } | null>(null);
 const lastRequest = ref<{ agent: string; content: string; messages?: Array<{ role: string; content: string }> } | null>(null);
-const lastResponse = ref<{ ok: boolean; content: string } | null>(null);
+const lastResponse = ref<{ ok: boolean; content: string; provider?: string; model?: string } | null>(null);
 
 const isChatMode = computed(() => testMode.value === "chat");
+
+/** 当前 provider 显示名（Grok / Qwen），chat 模式下可从响应解析 */
+const providerLabel = computed(() => {
+  const p = lastResponse.value?.provider ?? props.agent;
+  return p === "grok" ? "Grok" : p === "qwen" ? "Qwen" : String(p || props.agent).charAt(0).toUpperCase() + String(p || props.agent).slice(1);
+});
 
 /** 进入 chat 模式时获取当前 Agent 选中的模型（来自 Agent 角色设定） */
 async function fetchCurrentModel() {
@@ -69,12 +75,12 @@ async function runConnectionTest() {
   connectionLoading.value = true;
   connectionResult.value = null;
   try {
-    const res = (await testToken(props.agent)) as { data?: { ok?: boolean; message?: string } };
+    const res = (await testToken(props.agent)) as { data?: { ok?: boolean; message?: string; provider?: string; model?: string } };
     const ok = res?.data?.ok ?? false;
     const message = res?.data?.message ?? (ok ? "连接成功" : "连接失败");
     connectionResult.value = { ok, message };
     if (ok) ElMessage.success("连接测试成功");
-    else ElMessage.warning(message);
+    else ElMessage.error(message);
   } catch (e) {
     const msg = getFullErrorMessage(e);
     connectionResult.value = { ok: false, message: msg };
@@ -106,13 +112,15 @@ async function runChatTest() {
   lastRequest.value = { agent: props.agent, content, messages: history.length > 0 ? history : undefined };
   try {
     const res = await agentChatTest(props.agent, content, history.length > 0 ? history : undefined);
-    const ok = res?.data?.ok ?? false;
-    const reply = res?.data?.content ?? (ok ? "" : "无返回");
-    const modelUsed = (res?.data as { model?: string })?.model ?? "";
+    const data = res?.data as { ok?: boolean; content?: string; model?: string; provider?: string; error?: string } | undefined;
+    const ok = data?.ok ?? false;
+    const reply = data?.content ?? (ok ? "" : "无返回");
+    const modelUsed = data?.model ?? "";
+    const providerUsed = data?.provider ?? "";
     if (modelUsed) currentModel.value = modelUsed;
-    lastResponse.value = { ok, content: reply };
+    lastResponse.value = { ok, content: reply, provider: providerUsed || undefined, model: modelUsed || undefined };
     chatMessages.value[loadingIdx] = { role: "assistant", content: reply };
-    if (!ok && reply) ElMessage.warning(reply);
+    if (!ok && reply) ElMessage.error(reply);
     else if (ok) ElMessage.success("测试成功");
   } catch (e) {
     const fullMsg = getFullErrorMessage(e);
@@ -128,6 +136,7 @@ async function runChatTest() {
     <template #header>
       <div class="test-header">
         <span>连接测试</span>
+        <ElTag v-if="providerLabel" size="small" type="info" class="provider-badge">{{ providerLabel }}</ElTag>
         <div class="test-header-actions">
           <ElSelect v-model="testMode" size="small" style="width: 120px" placeholder="选择测试模式">
             <ElOption v-for="opt in modeOptions" :key="opt.value" :value="opt.value" :label="opt.label" />
@@ -138,12 +147,14 @@ async function runChatTest() {
     </template>
     <p class="test-tip">
       {{ isChatMode ? "与当前选择的 Agent 进行测试对话，同一会话内带完整对话历史。不保存到数据库，刷新页面即清空。" : "验证 API Key 是否有效，发送极简请求测试连接。" }}
-      <span v-if="isChatMode && currentModel" class="current-model">当前模型：{{ currentModel }}</span>
+      <ElTooltip v-if="isChatMode && currentModel" :content="`当前模型：${currentModel}`" placement="top">
+        <span class="current-model">当前模型：{{ currentModel }}</span>
+      </ElTooltip>
     </p>
 
     <!-- 连接测试：test_token -->
     <div v-if="!isChatMode" class="connection-test-area">
-      <ElButton type="primary" :loading="connectionLoading" @click="runConnectionTest">测试连接</ElButton>
+      <ElButton type="primary" :loading="connectionLoading" :disabled="connectionLoading" @click="runConnectionTest">测试连接</ElButton>
       <div v-if="connectionResult" :class="['connection-result', connectionResult.ok ? 'success' : 'error']">
         {{ connectionResult.ok ? "✓ " + connectionResult.message : "✗ " + connectionResult.message }}
       </div>

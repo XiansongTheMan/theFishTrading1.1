@@ -122,8 +122,8 @@
       </el-row>
     </template>
 
-    <Transition name="news-fade" mode="out-in">
-      <div v-else-if="displayList.length > 0" class="news-content" :key="activeTab">
+    <Transition v-else name="news-fade" mode="out-in">
+      <div v-if="displayList.length > 0" class="news-content" :key="activeTab">
         <el-row :gutter="20" class="news-grid">
           <el-col v-for="(item, idx) in displayList" :key="item.link || idx" :xs="24" :sm="12" :md="8">
           <el-card
@@ -227,7 +227,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import debounce from "lodash-es/debounce";
 import { useRouter } from "vue-router";
@@ -235,8 +235,8 @@ import { ElMessage } from "element-plus";
 import { Refresh, Delete, Document, Link, Star, StarFilled, ArrowDown, Loading } from "@element-plus/icons-vue";
 import * as XLSX from "xlsx";
 import html2pdf from "html2pdf.js";
-import { getNewsList, postNewsGrokDecision, batchGrok } from "../api/news";
-import { getWatchedFunds } from "../api/config";
+import { getNewsList, postNewsGrokDecision, batchGrok } from "../../api/news";
+import { getWatchedFunds } from "../../api/config";
 
 const REFRESH_INTERVAL = 60000;
 const PAGE_SIZE = 50;

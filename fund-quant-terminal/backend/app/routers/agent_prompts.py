@@ -19,7 +19,9 @@ from app.routers.config_router import (
 )
 from app.schemas.response import api_success
 from app.utils.logger import logger
-from app.agent_config import chat_grok, chat_qwen, GROK_MODELS, QWEN_MODELS, get_agent_config, fetch_qwen_models
+from app.agent_config import GROK_MODELS, QWEN_MODELS, get_agent_config, fetch_qwen_models
+from app.agent_config.common import build_messages
+from app.services.llm_client import MultiLLMClient, get_llm_client
 
 router = APIRouter()
 COLLECTION = "agent_role_templates"
@@ -46,6 +48,26 @@ class AgentChatTestRequest(BaseModel):
     agent: str = Field(..., description="grok or qwen")
     content: str = Field("", description="user input to test")
     messages: list[dict] | None = Field(None, description="conversation history for context, [{role, content}, ...]")
+    provider: str | None = Field(None, description="override provider (default from agent)")
+    model: str | None = Field(None, description="override model")
+    temperature: float | None = Field(None, description="override temperature")
+    fund_code: str | None = Field(None, description="optional fund code for context")
+    asset_summary: str | None = Field(None, description="optional asset summary for context")
+
+
+class AgentChatTestResponse(BaseModel):
+    ok: bool = Field(..., description="success or failure")
+    content: str = Field("", description="model reply or error message")
+    model: str = Field("", description="model used")
+    provider: str = Field("", description="provider used")
+    error: str | None = Field(None, description="error message when ok=False")
+
+
+class LLMDecisionCallRequest(BaseModel):
+    fund_code: str = Field("", description="基金代码")
+    provider: str | None = Field(None, description="grok 或 qwen，不传则从 config 取 primary_ai_agent")
+    include_news: bool = Field(True, description="是否包含新闻与情绪")
+    auto_call: bool = Field(False, description="是否自动调用 LLM 生成决策")
 
 
 class AgentModelUpdate(BaseModel):
@@ -231,24 +253,30 @@ async def create_agent_template(
 async def agent_chat_test(
     body: AgentChatTestRequest,
     db: AsyncIOMotorDatabase = Depends(get_database),
+    llm_client: MultiLLMClient = Depends(get_llm_client),
 ):
-    """测试 Agent 连接：用户输入内容，Agent 返回回复。不保存到数据库。"""
-    import asyncio
+    """测试 Agent 连接：用户输入内容，Agent 返回回复。不保存到数据库。使用 MultiLLMClient 统一调用。"""
     from bson import ObjectId
 
     try:
-        a = (body.agent or "").strip().lower()
-        if a not in VALID_AI_AGENTS:
-            a = DEFAULT_AI_AGENT
+        provider = (body.agent or "").strip().lower()
+        if provider not in VALID_AI_AGENTS:
+            provider = DEFAULT_AI_AGENT
 
         doc = await db["config"].find_one({"_id": CONFIG_ID}) or {}
-        if a == "grok":
+        if provider == "grok":
             lst = _normalize_ai_list(doc, GROK_LIST_KEY, "grok_api")
         else:
             lst = _normalize_ai_list(doc, QWEN_LIST_KEY, "qwen_api")
 
         if not lst or not lst[0].get("token"):
-            return api_success(data={"ok": False, "content": "请先在 Token 配置中为该 Agent 添加 API Key"})
+            return api_success(data={
+                "ok": False,
+                "content": "请先在 Token 配置中为该 Agent 添加 API Key",
+                "model": "",
+                "provider": provider,
+                "error": "请先在 Token 配置中为该 Agent 添加 API Key",
+            })
 
         token_val = lst[0]["token"].strip()
         user_content = (body.content or "").strip() or "你好"
@@ -257,7 +285,7 @@ async def agent_chat_test(
         # 获取当前选中的 Agent 角色模板，作为 system 提示；若有历史则追加「结合历史作答」指令
         system_prompt = ""
         role_config = await db["config"].find_one({"_id": CONFIG_AGENT_ROLE}) or {}
-        selected_id = (role_config.get(f"selected_{a}_id") or "").strip()
+        selected_id = (role_config.get(f"selected_{provider}_id") or "").strip()
         if selected_id:
             try:
                 template_doc = await db[COLLECTION].find_one({"_id": ObjectId(selected_id)})
@@ -269,24 +297,136 @@ async def agent_chat_test(
             ctx_hint = "请结合上述对话历史中的上下文信息作答。若用户已在历史中给出变量或数值，请据此推理并给出具体答案。"
             system_prompt = (system_prompt + "\n\n" + ctx_hint).strip() if system_prompt else ctx_hint
 
-        selected_model = (role_config.get(f"selected_{a}_model") or "").strip() or None
-        cfg = get_agent_config(a) or {}
+        selected_model = (role_config.get(f"selected_{provider}_model") or "").strip() or None
+        cfg = get_agent_config(provider) or {}
         model_param = selected_model or cfg.get("model") or None
 
-        if a == "grok":
-            ok, result = await asyncio.to_thread(
-                chat_grok, token_val, user_content, hist, system_prompt or None, model_param
-            )
-        else:
-            ok, result = await asyncio.to_thread(
-                chat_qwen, token_val, user_content, hist, system_prompt or None, model_param
-            )
+        # 从 agent_config url 推导 base_url（OpenAI 客户端需要不含 /chat/completions 的 base）
+        api_url = cfg.get("url") or ""
+        base_url = api_url.replace("/chat/completions", "").rstrip("/") if api_url else None
 
-        if ok:
-            return api_success(data={"ok": True, "content": result, "model": model_param or cfg.get("model", "")})
-        return api_success(data={"ok": False, "content": result, "model": model_param or cfg.get("model", "")})
+        messages = build_messages(hist, user_content, system_prompt or None)
+
+        result = await llm_client.generate_response(
+            messages=messages,
+            model=model_param,
+            provider=provider,
+            temperature=getattr(body, "temperature", None),
+            max_tokens=cfg.get("max_tokens"),
+            api_key=token_val,
+            base_url=base_url,
+        )
+
+        if result.get("ok"):
+            return api_success(data={
+                "ok": True,
+                "content": result.get("content", ""),
+                "model": result.get("model", model_param or ""),
+                "provider": result.get("provider", provider),
+                "error": None,
+            })
+        return api_success(data={
+            "ok": False,
+            "content": result.get("error", "未知错误"),
+            "model": model_param or cfg.get("model", ""),
+            "provider": provider,
+            "error": result.get("error", "未知错误"),
+        })
     except Exception as e:
         logger.exception("agent_chat_test error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/llm-decision-call")
+async def llm_decision_call(
+    body: LLMDecisionCallRequest,
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    llm_client: MultiLLMClient = Depends(get_llm_client),
+):
+    """
+    构建 LLM 决策上下文消息，可选自动调用 LLM 生成决策。
+    - auto_call=False: 返回 messages 和 news_summary，供前端自行调用
+    - auto_call=True: 使用 DB Token 调用 LLM，返回 content、model、provider、news_summary
+    """
+    from app.services.grok_decision import build_decision_messages
+
+    try:
+        provider = (body.provider or "").strip().lower()
+        if not provider or provider not in VALID_AI_AGENTS:
+            doc = await db["config"].find_one({"_id": CONFIG_ID}) or {}
+            provider = (doc.get(PRIMARY_AI_AGENT_KEY) or DEFAULT_AI_AGENT).lower()
+        if provider not in VALID_AI_AGENTS:
+            provider = DEFAULT_AI_AGENT
+
+        messages, news_summary = await build_decision_messages(
+            fund_code=body.fund_code or "",
+            db=db,
+            provider=provider,
+            include_news=body.include_news,
+        )
+
+        if not body.auto_call:
+            return api_success(data={
+                "ok": True,
+                "content": "",
+                "model": "",
+                "provider": provider,
+                "messages": messages,
+                "news_summary": news_summary,
+            })
+
+        # auto_call: 使用 DB Token 调用 LLM
+        doc = await db["config"].find_one({"_id": CONFIG_ID}) or {}
+        if provider == "grok":
+            lst = _normalize_ai_list(doc, GROK_LIST_KEY, "grok_api")
+        else:
+            lst = _normalize_ai_list(doc, QWEN_LIST_KEY, "qwen_api")
+
+        if not lst or not lst[0].get("token"):
+            return api_success(data={
+                "ok": False,
+                "content": "请先在 Token 配置中为该 Agent 添加 API Key",
+                "model": "",
+                "provider": provider,
+                "messages": messages,
+                "news_summary": news_summary,
+            })
+
+        token_val = lst[0]["token"].strip()
+        role_config = await db["config"].find_one({"_id": CONFIG_AGENT_ROLE}) or {}
+        selected_model = (role_config.get(f"selected_{provider}_model") or "").strip() or None
+        cfg = get_agent_config(provider) or {}
+        model_param = selected_model or cfg.get("model") or None
+        api_url = cfg.get("url") or ""
+        base_url = api_url.replace("/chat/completions", "").rstrip("/") if api_url else None
+
+        result = await llm_client.generate_response(
+            messages=messages,
+            model=model_param,
+            provider=provider,
+            temperature=cfg.get("temperature"),
+            max_tokens=cfg.get("max_tokens"),
+            api_key=token_val,
+            base_url=base_url,
+        )
+
+        if result.get("ok"):
+            return api_success(data={
+                "ok": True,
+                "content": result.get("content", ""),
+                "model": result.get("model", model_param or ""),
+                "provider": result.get("provider", provider),
+                "news_summary": news_summary,
+            })
+        return api_success(data={
+            "ok": False,
+            "content": result.get("error", "未知错误"),
+            "model": model_param or cfg.get("model", ""),
+            "provider": provider,
+            "news_summary": news_summary,
+        })
+    except Exception as e:
+        logger.exception("llm_decision_call error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

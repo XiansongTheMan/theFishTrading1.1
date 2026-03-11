@@ -1,14 +1,16 @@
 <!--
-  news接口测试 - Card + Tabs
+  新浪财经 - 新闻接口测试
+  二级 Tab：国际、市场、其他、焦点、公司、宏观、两会、观点
+  category 对应 international, market, other, focus, company, macro, lianghui, opinion
 -->
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import {
   ElCard,
   ElDivider,
+  ElEmpty,
   ElTabs,
   ElTabPane,
-  ElInput,
   ElInputNumber,
   ElButton,
   ElCollapse,
@@ -25,8 +27,8 @@ import {
   ElTooltip,
   type LoadingInstance,
 } from "element-plus";
-import { wallstreetcnTest, type WallStreetCNType } from "@/news/api/wallstreet";
-import { sourceOptions, getSourceConfig } from "@/news/config";
+import { sinaTest } from "@/news/api/sina";
+import { typeOptions, defaultTypeVal } from "@/news/config/sina";
 
 interface ParsedItem {
   title: string;
@@ -36,28 +38,19 @@ interface ParsedItem {
   sentiment?: number;
 }
 
-const sourceVal = ref("wallstreetcn");
-const typeVal = ref(getSourceConfig("wallstreetcn").defaultTypeVal);
-
-const typeOptions = computed(() => getSourceConfig(sourceVal.value).typeOptions);
-const keywordVal = ref("");
+const typeVal = ref(defaultTypeVal);
 const limitVal = ref(10);
 const saveToDb = ref(false);
 const loading = ref(false);
 const result = ref<Record<string, unknown> | null>(null);
 let loadingInstance: LoadingInstance | null = null;
 
-const currentOpt = computed(() => typeOptions.value.find((t) => t.value === typeVal.value) ?? typeOptions.value[0]);
-const needKeyword = computed(() => currentOpt.value.type === "keyword");
-
 const parsedList = computed<ParsedItem[]>(() => {
   const r = result.value as { parsed?: ParsedItem[] } | null;
   return r?.parsed ?? [];
 });
 
-const showTimeline = computed(
-  () => parsedList.value.length > 0 && currentOpt.value.type === "lives"
-);
+const showTimeline = computed(() => parsedList.value.length > 0);
 
 const rawJson = computed(() => {
   if (!result.value) return "";
@@ -68,52 +61,70 @@ const rawJson = computed(() => {
   }
 });
 
-/** 将 UTC ISO 时间转为北京时间 yyyy/mm/dd hh:mm:ss */
-function formatBeijingTime(isoStr: string | null | undefined): string {
-  if (!isoStr) return "—";
+function formatBeijingTime(isoStr: string | number | null | undefined): string {
+  if (isoStr == null) return "—";
+  let s: string;
+  if (typeof isoStr === "number") {
+    const d = new Date(isoStr);
+    if (Number.isNaN(d.getTime())) return "—";
+    s = d.toISOString();
+  } else if (typeof isoStr !== "string") {
+    return "—";
+  } else {
+    s = String(isoStr).trim();
+  }
+  if (!s) return "—";
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})/);
+  if (isoMatch) {
+    const [, y, m, day, h, min, sec] = isoMatch;
+    return `${y}/${m}/${day} ${h}:${min}:${sec}`;
+  }
   try {
-    const d = new Date(isoStr.endsWith("Z") ? isoStr : isoStr + "Z");
+    const hasTz = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(s);
+    const toParse = hasTz ? s : s.includes("T") ? s + "Z" : s.replace(" ", "T") + "Z";
+    const d = new Date(toParse);
+    if (Number.isNaN(d.getTime())) return s;
     const bj = new Date(d.getTime() + 8 * 60 * 60 * 1000);
     const y = bj.getUTCFullYear();
     const m = String(bj.getUTCMonth() + 1).padStart(2, "0");
     const day = String(bj.getUTCDate()).padStart(2, "0");
     const h = String(bj.getUTCHours()).padStart(2, "0");
     const min = String(bj.getUTCMinutes()).padStart(2, "0");
-    const s = String(bj.getUTCSeconds()).padStart(2, "0");
-    return `${y}/${m}/${day} ${h}:${min}:${s}`;
+    const sec = String(bj.getUTCSeconds()).padStart(2, "0");
+    if ([y, m, day, h, min, sec].some((v) => Number.isNaN(Number(v)))) return s;
+    const out = `${y}/${m}/${day} ${h}:${min}:${sec}`;
+    return out.includes("NaN") ? s : out;
   } catch {
-    return isoStr;
+    return s;
   }
 }
 
 function getErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === "object" && e && "response" in e) {
-    const ax = e as { response?: { data?: { message?: string } } };
-    return ax.response?.data?.message ?? "请求失败";
+    const ax = e as { response?: { data?: { message?: string; detail?: string } } };
+    const data = ax.response?.data;
+    if (data?.detail) return typeof data.detail === "string" ? data.detail : String(data.detail);
+    return data?.message ?? "请求失败";
   }
-  return "未知错误";
+  return "请求失败";
 }
 
-function onSourceChange() {
-  typeVal.value = getSourceConfig(sourceVal.value).defaultTypeVal;
-  handleTest();
-}
+watch(typeVal, () => {
+  if (!loading.value) handleTest();
+}, { immediate: true });
 
 async function handleTest() {
-  if (needKeyword.value && !keywordVal.value.trim()) {
-    ElMessage.warning("请填写关键词");
-    return;
-  }
   loading.value = true;
   result.value = null;
-  loadingInstance = ElLoading.service({ lock: true, text: "正在请求 news API...", background: "rgba(0,0,0,0.4)" });
+  loadingInstance = ElLoading.service({
+    lock: true,
+    text: "请求新浪财经 news API...",
+    background: "rgba(0,0,0,0.4)",
+  });
   try {
-    const opt = currentOpt.value;
-    const res = (await wallstreetcnTest({
-      type: opt.type,
-      channel: opt.channel,
-      keyword: keywordVal.value.trim() || undefined,
+    const res = (await sinaTest({
+      category: typeVal.value,
       limit: limitVal.value,
       save_to_db: saveToDb.value,
     })) as { data?: Record<string, unknown> };
@@ -131,59 +142,32 @@ async function handleTest() {
 </script>
 
 <template>
-  <div class="wallstreet-test">
-    <h2 class="page-title">news接口测试</h2>
-    <ElCard shadow="never" class="tab-card">
-      <!-- 一级 Tab：新闻源 -->
-      <ElTabs
-        v-model="sourceVal"
-        type="border-card"
-        class="tabs-level-1"
-        @tab-change="onSourceChange"
-      >
-        <ElTabPane
-          v-for="src in sourceOptions"
-          :key="src.value"
-          :name="src.value"
-          :label="src.label"
-        >
-          <!-- 二级 Tab：接口类型 -->
-          <ElTabs
-            v-model="typeVal"
-            type="card"
-            class="tabs-level-2"
-            @tab-change="handleTest"
-          >
-            <ElTabPane
-              v-for="opt in typeOptions"
-              :key="opt.value"
-              :name="opt.value"
-              :label="opt.label"
-            />
-          </ElTabs>
-          <ElDivider class="form-divider" />
-          <ElForm label-position="top" class="form-row">
-            <ElFormItem v-if="needKeyword" label="关键词">
-              <ElInput v-model="keywordVal" placeholder="输入搜索词" style="width: 180px" clearable />
-            </ElFormItem>
-            <ElFormItem label="Limit">
-              <ElInputNumber v-model="limitVal" :min="1" :max="100" style="width: 120px" />
-            </ElFormItem>
-            <ElFormItem label="保存至数据库">
-              <ElSwitch v-model="saveToDb" />
-            </ElFormItem>
-            <ElFormItem label=" ">
-              <ElButton type="primary" :loading="loading" @click="handleTest">执行测试</ElButton>
-            </ElFormItem>
-          </ElForm>
-        </ElTabPane>
-      </ElTabs>
-    </ElCard>
+  <div class="sina-test">
+    <!-- 二级 Tab 点击自动发起测试，也可点击「发起测试」按钮 -->
+    <ElTabs v-model="typeVal" type="card" class="tabs-level-2">
+      <ElTabPane
+        v-for="opt in typeOptions"
+        :key="opt.value"
+        :name="opt.value"
+        :label="opt.label"
+      />
+    </ElTabs>
+    <ElDivider class="form-divider" />
+    <ElForm label-position="top" class="form-row" @submit.prevent>
+      <ElFormItem label="Limit">
+        <ElInputNumber v-model="limitVal" :min="1" :max="100" style="width: 120px" />
+      </ElFormItem>
+      <ElFormItem label="保存到数据库">
+        <ElSwitch v-model="saveToDb" />
+      </ElFormItem>
+      <ElFormItem label=" ">
+        <ElButton type="primary" native-type="button" :loading="loading" @click="handleTest">发起测试</ElButton>
+      </ElFormItem>
+    </ElForm>
 
-    <!-- 时间线：lives 类型 -->
     <ElCard v-if="showTimeline" class="timeline-card" shadow="never">
       <template #header>
-        <span>快讯时间线</span>
+        <span>时间线</span>
         <ElTag v-if="parsedList.length" size="small" type="info" class="count-tag">共 {{ parsedList.length }} 条</ElTag>
       </template>
       <ElTimeline>
@@ -204,18 +188,19 @@ async function handleTest() {
               rel="noopener"
               class="timeline-link"
             >
-              查看原文
+              原文链接
             </ElLink>
             <ElTooltip v-if="item.sentiment != null" placement="top" trigger="hover" popper-class="sentiment-tooltip-popper">
               <template #content>
                 <div class="sentiment-tooltip">
-                  <div><strong>本地关键词计算</strong>，非接口返回</div>
-                  <div>正向词：利好、上涨、买入、大涨、看涨、反弹、增长、突破、增持、推荐</div>
-                  <div>负向词：利空、下跌、卖出、大跌、看跌、回落、跌破、亏损、减持、预警</div><div>得分 = (正向次数 - 负向次数) / 总次数，范围 -1 ~ 1</div>
+                  <div><strong>情感分数</strong>：基于摘要的简单情感分析</div>
+                  <div>正数表示偏多，负数表示偏空</div>
+                  <div>范围 -1 ~ 1</div>
+                  <div>score = (正面词 - 负面词) / 总词数，约 -1 ~ 1</div>
                 </div>
               </template>
               <ElTag size="small" :type="item.sentiment >= 0 ? 'success' : 'danger'" class="sentiment-tag">
-                情绪 {{ item.sentiment }}
+                情感 {{ item.sentiment }}
               </ElTag>
             </ElTooltip>
           </div>
@@ -223,13 +208,8 @@ async function handleTest() {
       </ElTimeline>
     </ElCard>
 
-    <!-- 关键字段卡片 -->
-    <ElCard
-      v-else-if="parsedList.length > 0"
-      class="fields-card"
-      shadow="never"
-    >
-      <template #header>关键字段</template>
+    <ElCard v-else-if="parsedList.length > 0" class="fields-card" shadow="never">
+      <template #header>字段列表</template>
       <div class="field-list">
         <div v-for="(item, idx) in parsedList" :key="idx" class="field-item">
           <div class="field-label">标题</div>
@@ -240,18 +220,17 @@ async function handleTest() {
           <div class="field-value field-summary">{{ item.summary || "—" }}</div>
           <div class="field-label">原文链接</div>
           <div class="field-value">
-            <ElLink v-if="item.url" :href="item.url" type="primary" target="_blank" rel="noopener">查看原文</ElLink>
+            <ElLink v-if="item.url" :href="item.url" type="primary" target="_blank" rel="noopener">打开</ElLink>
             <span v-else>—</span>
           </div>
         </div>
       </div>
     </ElCard>
 
-    <!-- 原始 JSON 折叠面板 -->
     <ElCard v-if="result" class="result-card" shadow="never">
       <template #header>原始 JSON</template>
       <ElCollapse>
-        <ElCollapseItem title="请求与响应" name="raw">
+        <ElCollapseItem title="展开查看" name="raw">
           <pre class="json-pre"><code>{{ rawJson }}</code></pre>
         </ElCollapseItem>
       </ElCollapse>
@@ -260,46 +239,10 @@ async function handleTest() {
 </template>
 
 <style scoped>
-.wallstreet-test {
-  max-width: 900px;
-}
-
-.page-title {
-  margin: 0 0 20px;
-}
-
-.tab-card :deep(.el-card__body) {
+.sina-test {
   padding: 0;
 }
 
-/* ========== 一级 Tab：新闻源（ElTabs border-card） ========== */
-.tabs-level-1 :deep(.el-tabs__header) {
-  margin: 0;
-  padding: 0 20px;
-  background: var(--el-fill-color-light);
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
-.tabs-level-1 :deep(.el-tabs__nav-wrap) {
-  padding: 0;
-}
-.tabs-level-1 :deep(.el-tabs__item) {
-  font-size: 0.95rem;
-  font-weight: 500;
-  padding: 0 24px;
-  height: 48px;
-  line-height: 48px;
-}
-.tabs-level-1 :deep(.el-tabs__item.is-active) {
-  color: var(--el-color-primary);
-}
-.tabs-level-1 :deep(.el-tabs__content) {
-  padding: 20px;
-}
-.tabs-level-1 :deep(.el-tabs__active-bar) {
-  height: 3px;
-}
-
-/* ========== 二级 Tab：接口类型（ElTabs card） ========== */
 .tabs-level-2 :deep(.el-tabs__header) {
   margin: 0 0 16px;
   padding: 0;
@@ -332,12 +275,17 @@ async function handleTest() {
   border-radius: 0 4px 4px 0;
 }
 .tabs-level-2 :deep(.el-tabs__item.is-active) {
-  background: var(--el-color-primary);
-  color: #fff;
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
   border-color: var(--el-color-primary);
+  font-weight: 500;
 }
 .tabs-level-2 :deep(.el-tabs__item.is-active + .el-tabs__item) {
-  border-left-color: var(--el-color-primary);
+  border-left-color: var(--el-border-color);
+}
+html.dark .tabs-level-2 :deep(.el-tabs__item.is-active) {
+  background: var(--el-color-primary-dark-2);
+  color: var(--el-color-primary-light-3);
 }
 .tabs-level-2 :deep(.el-tabs__content) {
   padding: 0;
@@ -399,7 +347,6 @@ async function handleTest() {
   vertical-align: middle;
 }
 
-/* 情绪说明 tooltip */
 :deep(.sentiment-tooltip-popper .sentiment-tooltip) {
   max-width: 320px;
   line-height: 1.6;
@@ -460,8 +407,6 @@ async function handleTest() {
 }
 
 @media (max-width: 480px) {
-  .form-row :deep(.el-select),
-  .form-row :deep(.el-input),
   .form-row :deep(.el-input-number) {
     width: 100% !important;
     max-width: none;

@@ -87,9 +87,14 @@ export const getHoldingTransactions = (assetType: string, symbol: string) =>
     `/assets/history/${encodeURIComponent(assetType)}/${encodeURIComponent(symbol.trim().split(".")[0])}/transactions`
   );
 
-export const getHoldingSummary = (assetType: string, symbol: string) =>
+export const getHoldingSummary = (
+  assetType: string,
+  symbol: string,
+  refreshPrice = true
+) =>
   request.get<{ data: HoldingSummary }>(
-    `/assets/history/${encodeURIComponent(assetType)}/${encodeURIComponent(symbol.trim().split(".")[0])}/summary`
+    `/assets/history/${encodeURIComponent(assetType)}/${encodeURIComponent(symbol.trim().split(".")[0])}/summary`,
+    { params: { refresh_price: refreshPrice } }
   );
 
 export const createTransaction = (data: {

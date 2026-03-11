@@ -185,6 +185,53 @@ fund-quant-terminal/
 
 ---
 
+## 九、Agent 角色设定与 /agent-prompts-test
+
+Agent 角色设定支持 Grok 与 Qwen 两种大模型，可通过统一聊天测试接口 `/api/agent-prompts-test` 进行连接与对话测试。
+
+### 功能说明
+
+- 在 **Agent 角色设定** 页面可切换 Grok / Qwen，配置角色模板与模型
+- 使用 **连接测试** 或 **chat 测试** 验证 API Key 与模型是否可用
+- **Token 配置** 中需先添加对应 Agent 的 API Key（Grok 在 console.x.ai 获取，Qwen 在 dashscope.console.aliyun.com 获取）
+
+### 接口示例
+
+**Grok 测试：**
+
+```bash
+curl -X POST "http://localhost:8000/api/agent-prompts-test" \
+  -H "Content-Type: application/json" \
+  -d '{"agent":"grok","content":"你好","messages":[]}'
+```
+
+**Qwen 测试：**
+
+```bash
+curl -X POST "http://localhost:8000/api/agent-prompts-test" \
+  -H "Content-Type: application/json" \
+  -d '{"agent":"qwen","content":"你好","messages":[]}'
+```
+
+### 响应格式
+
+```json
+{
+  "code": 200,
+  "data": {
+    "ok": true,
+    "content": "模型回复内容",
+    "model": "grok-4-fast-reasoning",
+    "provider": "grok",
+    "error": null
+  }
+}
+```
+
+失败时 `ok` 为 `false`，`content` 与 `error` 为错误信息。
+
+---
+
 ## 许可证
 
 MIT

@@ -184,13 +184,20 @@ async function loadData() {
   }
 }
 
+function getPriceForDate(d: string): number {
+  if (!d) return 0;
+  const item = chartData.value.find((x) => x.date === d);
+  return item?.value ?? 0;
+}
+
 function openTxDialog(type: "buy" | "sell", date?: string, price?: number) {
   if (!date && chartData.value.length) {
     const last = chartData.value[chartData.value.length - 1];
     date = last?.date ?? "";
-    price = last?.value ?? price ?? 0;
   }
-  txForm.value = { type, date: date || "", price: price ?? 0, amount: 0 };
+  const resolvedDate = date || "";
+  const resolvedPrice = resolvedDate ? getPriceForDate(resolvedDate) : (price ?? 0);
+  txForm.value = { type, date: resolvedDate, price: resolvedPrice, amount: 0 };
   txDialogVisible.value = true;
 }
 
@@ -270,6 +277,24 @@ async function handleDeleteTx(t: HoldingTransaction) {
     }
   } finally {
     deleteTxLoading.value = null;
+  }
+}
+
+const refreshProfitLoading = ref(false);
+async function handleRefreshProfit() {
+  if (refreshProfitLoading.value || !symbol.value) return;
+  refreshProfitLoading.value = true;
+  try {
+    const summaryRes = await getHoldingSummary(assetType.value, symbol.value, true);
+    const newSummary = (summaryRes as { data?: HoldingSummary })?.data ?? null;
+    if (newSummary) {
+      summary.value = newSummary;
+      ElMessage.success("持有收益已刷新");
+    }
+  } catch (e) {
+    ElMessage.error((e as Error)?.message || "刷新失败");
+  } finally {
+    refreshProfitLoading.value = false;
   }
 }
 
@@ -449,6 +474,16 @@ watch(
   () => loadData(),
   { immediate: true }
 );
+
+// 日期变化时，单价自动取该日期的净值/收盘价，不可手动修改
+watch(
+  () => txForm.value.date,
+  (newDate) => {
+    if (newDate && txDialogVisible.value) {
+      txForm.value.price = getPriceForDate(newDate);
+    }
+  }
+);
 </script>
 
 <template>
@@ -482,6 +517,7 @@ watch(
       <div class="action-btns">
         <ElButton type="danger" @click="openTxDialog('buy')">买入</ElButton>
         <ElButton type="success" @click="openTxDialog('sell')">卖出</ElButton>
+        <ElButton :loading="refreshProfitLoading" @click="handleRefreshProfit">刷新收益</ElButton>
       </div>
     </ElCard>
 
@@ -595,7 +631,9 @@ watch(
           />
         </ElFormItem>
         <ElFormItem label="单价" required>
-          <ElInputNumber v-model="txForm.price" :min="0.0001" :precision="4" style="width: 100%" />
+          <ElInputNumber v-model="txForm.price" :min="0.0001" :precision="4" style="width: 100%" disabled />
+          <span class="price-hint">根据选中日期自动填充，不可修改</span>
+          <span v-if="txForm.date && !txForm.price" class="price-hint warn">该日期无数据，请选择图表内有数据的日期</span>
         </ElFormItem>
         <ElFormItem label="金额" required>
           <ElInputNumber v-model="txForm.amount" :min="0.01" :precision="2" style="width: 100%" placeholder="投入金额" />
@@ -798,5 +836,16 @@ watch(
 .qty-hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+.price-hint {
+  display: block;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+}
+
+.price-hint.warn {
+  color: var(--el-color-warning);
 }
 </style>

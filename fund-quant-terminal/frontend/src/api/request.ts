@@ -38,8 +38,9 @@ declare module "axios" {
 function getErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;
-    const msg = (err.response?.data as { message?: string })?.message;
-    if (msg) return msg;
+    const data = err.response?.data as { message?: string; detail?: string } | undefined;
+    const msg = data?.detail ?? data?.message;
+    if (msg) return typeof msg === "string" ? msg : JSON.stringify(msg);
     if (status === 401) return "未授权，请重新登录";
     if (status === 404) return "接口不存在 (404)，请确认后端已启动于 8000 端口";
     if (status === 500) return "服务器错误";

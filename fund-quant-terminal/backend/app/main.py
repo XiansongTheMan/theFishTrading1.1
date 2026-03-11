@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.database import close_database, get_database
 from app.utils.logger import logger
-from app.routers import agent_prompts, assets, config_router, data, decisions, grok, mongo, wallstreetcn
+from app.routers import agent_prompts, assets, cailianshe, config_router, data, decisions, eastmoney, grok, mongo, sina, wallstreetcn, yicai
 from app.routers.news import router as news_router
 from app.schemas.response import api_success
 
@@ -56,6 +56,43 @@ async def _scheduled_news_fetch() -> None:
 def _get_grok_prompt_path() -> Path:
     """项目根目录下的 GROK_ROLE_PROMPT.md（backend/app 往上两级为 backend，再两级为项目根）"""
     return Path(__file__).resolve().parent.parent.parent.parent / "GROK_ROLE_PROMPT.md"
+
+
+async def _validate_llm_keys_on_startup(db):
+    """启动时校验 LLM Token（grok_list、qwen_list），仅记录日志，不阻塞启动"""
+    try:
+        from app.routers.config_router import (
+            CONFIG_ID,
+            GROK_LIST_KEY,
+            QWEN_LIST_KEY,
+            _normalize_ai_list,
+        )
+        from app.agent_config import test_grok_token, test_qwen_token, get_agent_config
+
+        doc = await db["config"].find_one({"_id": CONFIG_ID}) or {}
+        role_doc = await db["config"].find_one({"_id": "agent_role_config"}) or {}
+
+        for provider, list_key in [("grok", GROK_LIST_KEY), ("qwen", QWEN_LIST_KEY)]:
+            lst = _normalize_ai_list(doc, list_key, "grok_api" if provider == "grok" else "qwen_api")
+            token = (lst[0]["token"] or "").strip() if lst and lst[0].get("token") else ""
+            if not token:
+                logger.warning("LLM provider %s: key invalid or missing", provider)
+                continue
+            cfg = get_agent_config(provider) or {}
+            model_param = (role_doc.get(f"selected_{provider}_model") or "").strip() or cfg.get("model") or None
+            try:
+                if provider == "grok":
+                    ok, _ = await asyncio.to_thread(test_grok_token, token, model_param)
+                else:
+                    ok, _ = await asyncio.to_thread(test_qwen_token, token, model_param)
+                if ok:
+                    logger.info("LLM provider %s: key validated", provider)
+                else:
+                    logger.warning("LLM provider %s: key invalid or missing", provider)
+            except Exception as e:
+                logger.warning("LLM provider %s: key invalid or missing (%s)", provider, e)
+    except Exception as e:
+        logger.warning("LLM key validation on startup failed: %s", e)
 
 
 async def _sync_agent_role_to_file():
@@ -103,6 +140,8 @@ async def lifespan(app: FastAPI):
 
         await create_indexes()
         logger.info("Database indexes created successfully")
+
+        await _validate_llm_keys_on_startup(db)
 
         doc = await db["config"].find_one({"_id": "tokens"})
         if doc:
@@ -203,6 +242,10 @@ app.include_router(grok.router, prefix="/api", tags=["Grok"])
 app.include_router(config_router.router, prefix="/api", tags=["配置"])
 app.include_router(agent_prompts.router, prefix="/api", tags=["Agent 角色设定"])
 app.include_router(wallstreetcn.router, prefix="/api/wallstreetcn", tags=["华尔街见闻"])
+app.include_router(eastmoney.router, prefix="/api/eastmoney", tags=["东方财富"])
+app.include_router(cailianshe.router, prefix="/api/cailianshe", tags=["财联社"])
+app.include_router(yicai.router, prefix="/api/yicai", tags=["第一财经"])
+app.include_router(sina.router, prefix="/api/sina", tags=["新浪财经"])
 
 # 兼容旧版 v1 路径
 app.include_router(data.router, prefix="/api/v1/data", tags=["数据-v1"])

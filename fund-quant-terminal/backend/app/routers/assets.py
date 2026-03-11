@@ -247,13 +247,36 @@ async def get_holding_transactions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _compute_from_transactions(txs: List[Dict[str, Any]]) -> tuple[float, float]:
+    """从历史交易重算持仓数量与成本价，返回 (quantity, cost_price)"""
+    qty = 0.0
+    cost = 0.0
+    for t in sorted(txs, key=lambda x: (x.get("date") or "", x.get("created_at") or datetime.min)):
+        typ = (t.get("type") or "").lower()
+        tq = float(t.get("quantity") or 0)
+        tp = float(t.get("price") or 0)
+        if typ == "buy":
+            if tq <= 0 or tp <= 0:
+                continue
+            new_qty = qty + tq
+            cost = (qty * cost + tq * tp) / new_qty if new_qty else tp
+            qty = new_qty
+        elif typ == "sell":
+            if tq <= 0:
+                continue
+            qty = max(0.0, qty - tq)
+            # 卖出不改变成本价
+    return (qty, cost)
+
+
 @router.get("/history/{asset_type}/{symbol}/summary")
 async def get_holding_summary(
     asset_type: str,
     symbol: str,
+    refresh_price: bool = True,  # 进入详情页时拉取最新价，确保收益基于最新行情
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict:
-    """获取该持仓的汇总：投入资金、持有收益，当前市值使用真实行情价"""
+    """获取该持仓的汇总：投入资金、持有收益，当前市值使用真实行情价。优先从历史交易重算，保证与操作一致"""
     try:
         sym = (symbol or "").strip().split(".")[0]
         at = (asset_type or "fund").lower()
@@ -266,16 +289,25 @@ async def get_holding_summary(
         cost_price = 0.0
         current_price = 0.0
         name = sym
-        if asset:
+        # 优先从历史交易重算 quantity/cost_price，确保持有收益随操作更新
+        tx_query: Dict[str, Any] = {"asset_type": at}
+        if at == "fund":
+            tx_query["symbol"] = {"$in": [sym, sym.zfill(6)]}
+        else:
+            tx_query["symbol"] = sym
+        tx_cursor = db[TRANSACTION_COLLECTION].find(tx_query)
+        txs = await tx_cursor.to_list(length=500)
+        if txs:
+            quantity, cost_price = _compute_from_transactions(txs)
+        elif asset:
             quantity = float(asset.get("quantity") or 0)
             cost_price = float(asset.get("cost_price") or 0)
+        if asset:
             name = asset.get("name") or sym
-        else:
-            cost_price = 0.0
-        # 优先使用 sync 时写入的 current_price，避免每次进入详情页都调用慢速 akshare 接口
+        # refresh_price=True 时拉取最新价；否则优先用 sync 写入的 current_price
         current_price: Optional[float] = None
         price_fetched = False
-        if asset and (p := asset.get("current_price")) is not None:
+        if not refresh_price and asset and (p := asset.get("current_price")) is not None:
             try:
                 current_price = float(p)
                 price_fetched = True
@@ -286,12 +318,49 @@ async def get_holding_summary(
                 if at == "fund":
                     nav_list = await data_service.get_fund_nav(sym)
                     if nav_list:
-                        for r in reversed(nav_list):
+                        # 取日期最大的记录作为最新净值，不依赖列表顺序
+                        def _parse_date(d: Any) -> Optional[datetime]:
+                            v = d.get("date") or d.get("净值日期")
+                            if v is None:
+                                return None
+                            if hasattr(v, "year"):
+                                return v
+                            s = str(v).strip()
+                            for fmt in ("%Y-%m-%d", "%Y%m%d"):
+                                try:
+                                    return datetime.strptime(s[:10] if fmt == "%Y-%m-%d" else s.replace("-", "")[:8], fmt)
+                                except (ValueError, TypeError):
+                                    continue
+                            return None
+                        best: Optional[tuple[datetime, float]] = None
+                        for r in nav_list:
                             p = r.get("nav") or r.get("单位净值")
-                            if p is not None:
-                                current_price = float(p)
-                                price_fetched = True
-                                break
+                            if p is None:
+                                continue
+                            try:
+                                pv = float(p)
+                                if pv != pv:
+                                    continue
+                            except (TypeError, ValueError):
+                                continue
+                            dt = _parse_date(r)
+                            if dt is not None and (best is None or dt > best[0]):
+                                best = (dt, pv)
+                        if best is not None:
+                            current_price = best[1]
+                            price_fetched = True
+                        else:
+                            # 无有效日期时退化为取最后一条有效净值
+                            for r in reversed(nav_list):
+                                p = r.get("nav") or r.get("单位净值")
+                                if p is not None:
+                                    try:
+                                        current_price = float(p)
+                                        if current_price == current_price:
+                                            price_fetched = True
+                                            break
+                                    except (TypeError, ValueError):
+                                        pass
                 else:
                     daily_list = await data_service.get_stock_daily(symbol=sym)
                     if daily_list:
@@ -302,6 +371,46 @@ async def get_holding_summary(
                             price_fetched = True
             except Exception as e:
                 logger.debug("get_holding_summary 拉取实时价失败 %s %s: %s", sym, at, e)
+        # 若 get_fund_nav 未取到最新价，用 holding_histories 缓存的走势数据作为 fallback（与图表一致）
+        if current_price is None:
+            try:
+                hist_doc = await db[HISTORY_COLLECTION].find_one({"symbol": sym.zfill(6) if at == "fund" else sym, "asset_type": at})
+                if not hist_doc and at == "fund":
+                    hist_doc = await db[HISTORY_COLLECTION].find_one({"symbol": sym, "asset_type": at})
+                if hist_doc and hist_doc.get("data"):
+                    best_h: Optional[tuple[Optional[datetime], float]] = None
+                    for h in hist_doc["data"]:
+                        v = h.get("value")
+                        if v is None:
+                            continue
+                        try:
+                            pv = float(v)
+                            if pv != pv:
+                                continue
+                        except (TypeError, ValueError):
+                            continue
+                        d = h.get("date")
+                        dt: Optional[datetime] = None
+                        if d is not None:
+                            if hasattr(d, "year"):
+                                dt = d
+                            else:
+                                s = str(d).strip()
+                                for fmt in ("%Y-%m-%d", "%Y%m%d"):
+                                    try:
+                                        dt = datetime.strptime(
+                                            s[:10] if fmt == "%Y-%m-%d" else s.replace("-", "")[:8], fmt
+                                        )
+                                        break
+                                    except (ValueError, TypeError):
+                                        continue
+                        if best_h is None or (dt is not None and (best_h[0] is None or dt > best_h[0])):
+                            best_h = (dt, pv)
+                    if best_h is not None:
+                        current_price = best_h[1]
+                        price_fetched = True
+            except Exception as e:
+                logger.debug("get_holding_summary holding_histories fallback 失败 %s: %s", sym, e)
         # 优先使用 sync 时写入的 sector，避免进入详情页时调用 akshare
         sector: Optional[str] = None
         if asset and (s := asset.get("sector")) is not None and str(s).strip():
